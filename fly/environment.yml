@@ -1,5 +1,5 @@
 # Server environment. Conda builds avoid "Illegal instruction" crashes on the Xeons (no AVX2).
-# fly-brain itself is installed from its repo; follow its README for the GeNN backend.
+# fly-brain itself is cloned to fly/vendor/fly-brain and imported from there (see fly/brain.py).
 name: flydrums
 channels:
   - pytorch
@@ -16,7 +16,12 @@ dependencies:
   - mujoco
   - pyzmq
   - mido
+  - matplotlib
+  - python-dotenv
+  - pytest
   - pip
   - pip:
       - neuprint-python
       - snntorch
+      - dm_control
+      - git+https://github.com/TuragaLab/flybody.git
