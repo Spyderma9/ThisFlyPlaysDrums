@@ -1,27 +1,26 @@
-# Server environment. Conda builds avoid "Illegal instruction" crashes on the Xeons (no AVX2).
+# Server environment. Conda-forge for the scientific stack; PyTorch from its own pip wheels (CUDA 12.6),
+# the same way fly-brain installs it. The `pytorch` conda channel stopped at 2.5 and clashes with newer MKL.
+# The Xeons have AVX but not AVX2: check `import torch, mujoco` after any change here.
 # fly-brain itself is cloned to fly/vendor/fly-brain and imported from there (see fly/brain.py).
 name: flydrums
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
 dependencies:
   - python=3.10
-  - numpy
+  - numpy=1.26.4  # fly-brain's pin
   - pandas
   - pyarrow
+  - scipy
   - scikit-learn
-  - pytorch
-  - pytorch-cuda=12.1
-  - mujoco
   - pyzmq
   - mido
   - matplotlib
-  - python-dotenv
+  - tqdm
   - pytest
   - pip
   - pip:
-      - neuprint-python
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch
       - snntorch
       - dm_control
       - git+https://github.com/TuragaLab/flybody.git

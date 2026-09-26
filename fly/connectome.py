@@ -1,17 +1,22 @@
-"""Connectome loading: MaleCNS v1.0 via neuPrint (main), FlyWire v783 from fly-brain's files (fallback).
+"""Connectome loading: MaleCNS v1.0 bulk download (main), FlyWire v783 from fly-brain's files (fallback).
 
 Both give a Connectome: a neuron table whose row order is the matrix index, and signed synapse-count
 edges (pre, post, weight). Sign follows Shiu et al.: GABA, glutamate and histamine inhibit, everything
-else excites. fly-brain's wScale is applied later in brain.py, not here.
+else excites (including an unclear or missing neurotransmitter). fly-brain's wScale is applied later in
+brain.py, not here.
 
-    python -m fly.connectome            # pull MaleCNS into data/malecns/ (resumes if interrupted)
+MaleCNS v1.0 (CC-BY) comes as flat feather files from Janelia's bucket. A body counts as a neuron when it
+has a superclass; that drops glia, orphans and other fragments (166,700 of 211,577 bodies). Soma positions
+are raw voxel coordinates (8 nm), from somaLocation or else tosomaLocation, NaN for neurons with neither.
+
+    python -m fly.connectome            # download MaleCNS into data/malecns/ (resumes if interrupted)
     python -m fly.connectome --summary  # print neuron counts by superclass and the exit nerves seen
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,11 +28,14 @@ DATA = REPO / "data"
 MALECNS_DIR = DATA / "malecns"
 FLYBRAIN_DATA = REPO / "fly" / "vendor" / "fly-brain" / "data"
 
-DATASET = "male-cns:v1.0"
+MALECNS_URL = "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/"
+ANNOTATIONS = "body-annotations-male-cns-v1.0-minconf-0.5.feather"  # 14.5 MB
+NEUROTRANSMITTERS = "body-neurotransmitters-male-cns-v1.0.feather"  # 43 MB
+WEIGHTS = "connectome-weights-male-cns-v1.0-minconf-0.5.feather"  # 1.05 GB: body_pre, body_post, weight
 INHIBITORY_NT = {"gaba", "glutamate", "histamine"}
 NEURON_COLUMNS = [
     "bodyId", "type", "instance", "superclass", "class", "subclass", "somaSide", "somaNeuromere",
-    "entryNerve", "exitNerve", "consensusNt", "predictedNt", "somaLocation", "status",
+    "entryNerve", "exitNerve", "receptorType", "flywireType", "mancType", "status",
 ]
 
 
@@ -63,68 +71,64 @@ class Connectome:
         return Connectome(f"{self.name}-shuffled{seed}", self.neurons, self.pre, rng.permutation(self.post), self.weight)
 
 
-def _client():
-    from dotenv import load_dotenv
-    from neuprint import Client
-
-    load_dotenv(REPO / ".env")
-    token = os.environ.get("NEUPRINT_TOKEN", "").strip()
-    if not token:
-        raise SystemExit("NEUPRINT_TOKEN is empty. Paste your neuprint.janelia.org token into .env.")
-    return Client("neuprint.janelia.org", dataset=DATASET, token=token)
-
-
 def _sign(nt: pd.Series) -> np.ndarray:
     return np.where(nt.fillna("").str.lower().isin(INHIBITORY_NT), -1.0, 1.0).astype(np.float32)
 
 
-def fetch_malecns(batch: int = 2000) -> None:
-    """Pull neurons and all neuron-to-neuron edges into data/malecns/. Edge batches resume if interrupted."""
-    from neuprint import NeuronCriteria, fetch_adjacencies, fetch_neurons
-
-    client = _client()
-    MALECNS_DIR.mkdir(parents=True, exist_ok=True)
-    neurons_path = MALECNS_DIR / "neurons.parquet"
-    if not neurons_path.exists():
-        print("Fetching neurons...")
-        df, _ = fetch_neurons(NeuronCriteria(), omit_rois=True, client=client)
-        missing = [c for c in NEURON_COLUMNS if c not in df.columns]
-        if missing:
-            print(f"  note: columns not in {DATASET}: {missing}")
-        if "somaLocation" in df.columns:
-            loc = df["somaLocation"].apply(lambda p: p if isinstance(p, (list, tuple)) and len(p) == 3 else [np.nan] * 3)
-            df[["x", "y", "z"]] = pd.DataFrame(loc.tolist(), index=df.index)
-        keep = [c for c in NEURON_COLUMNS if c in df.columns and c != "somaLocation"] + [c for c in "xyz" if c in df.columns]
-        df[keep].sort_values("bodyId").reset_index(drop=True).to_parquet(neurons_path)
-    neurons = pd.read_parquet(neurons_path)
-    print(f"{len(neurons):,} neurons")
-
-    edge_dir = MALECNS_DIR / "edges"
-    edge_dir.mkdir(exist_ok=True)
-    ids = neurons["bodyId"].to_numpy()
-    n_batches = int(np.ceil(len(ids) / batch))
-    for b in range(n_batches):
-        out = edge_dir / f"{b:04d}.parquet"
-        if out.exists():
-            continue
-        chunk = ids[b * batch : (b + 1) * batch].tolist()
-        _, conn = fetch_adjacencies(
-            NeuronCriteria(bodyId=chunk), None, omit_rois=True, properties=[], client=client
-        )
-        conn[["bodyId_pre", "bodyId_post", "weight"]].to_parquet(out)
-        print(f"  edges batch {b + 1}/{n_batches}: {len(conn):,}")
+def _download(url: str, dest: Path, chunk: int = 1 << 20) -> None:
+    """Fetch url to dest via dest.part, resuming a partial .part with an HTTP Range request."""
+    if dest.exists():
+        return
+    part = dest.with_name(dest.name + ".part")
+    have = part.stat().st_size if part.exists() else 0
+    req = urllib.request.Request(url, headers={"Range": f"bytes={have}-"} if have else {})
+    with urllib.request.urlopen(req) as resp:
+        if have and resp.status != 206:  # server ignored the range: start over
+            have = 0
+        total = have + int(resp.headers.get("Content-Length", 0))
+        with open(part, "ab" if have else "wb") as f:
+            done = have
+            while block := resp.read(chunk):
+                f.write(block)
+                done += len(block)
+                print(f"\r  {dest.name}: {done / 1e6:,.0f} / {total / 1e6:,.0f} MB", end="", flush=True)
+    print()
+    part.rename(dest)
 
 
-def load_malecns() -> Connectome:
-    neurons = pd.read_parquet(MALECNS_DIR / "neurons.parquet")
-    edges = pd.concat(pd.read_parquet(p) for p in sorted((MALECNS_DIR / "edges").glob("*.parquet")))
-    index = pd.Series(np.arange(len(neurons)), index=neurons["bodyId"])
-    edges = edges[edges["bodyId_post"].isin(index.index)]  # drop edges onto fragments outside the table
-    pre = index[edges["bodyId_pre"]].to_numpy()
-    post = index[edges["bodyId_post"]].to_numpy()
-    nt = neurons["consensusNt"] if "consensusNt" in neurons else neurons.get("predictedNt", pd.Series(index=neurons.index, dtype=str))
-    weight = edges["weight"].to_numpy(np.float32) * _sign(nt)[pre]
-    return Connectome("malecns-v1.0", neurons, pre, post, weight)
+def fetch_malecns(root: Path = MALECNS_DIR) -> None:
+    """Download the three MaleCNS v1.0 files into root. Re-running resumes or skips finished files."""
+    root.mkdir(parents=True, exist_ok=True)
+    for name in (ANNOTATIONS, NEUROTRANSMITTERS, WEIGHTS):
+        _download(MALECNS_URL + name, root / name)
+
+
+def _xyz(loc) -> list:
+    return list(loc) if loc is not None and len(loc) == 3 else [np.nan] * 3
+
+
+def load_malecns(root: Path = MALECNS_DIR) -> Connectome:
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.ipc  # noqa: F401  (makes pa.ipc available)
+
+    ann = pd.read_feather(root / ANNOTATIONS)
+    ann = ann[ann["superclass"].notna()].sort_values("bodyId").reset_index(drop=True)
+    neurons = ann[NEURON_COLUMNS].copy()
+    soma = ann["somaLocation"].where(ann["somaLocation"].notna(), ann["tosomaLocation"])
+    neurons[["x", "y", "z"]] = np.array([_xyz(p) for p in soma], dtype=np.float64).reshape(-1, 3)
+
+    nt = pd.read_feather(root / NEUROTRANSMITTERS, columns=["body", "consensus_nt", "predicted_nt"])
+    neurons = neurons.merge(nt.rename(columns={"body": "bodyId"}), on="bodyId", how="left")
+
+    ids = neurons["bodyId"].to_numpy()  # sorted, so searchsorted maps bodyId -> row index
+    edges = pa.ipc.open_file(root / WEIGHTS).read_all()  # feather v2 is Arrow IPC: body_pre, body_post, weight
+    known = pa.array(ids)  # drop edges touching fragments outside the neuron table
+    edges = edges.filter(pc.and_(pc.is_in(edges["body_pre"], known), pc.is_in(edges["body_post"], known)))
+    pre = np.searchsorted(ids, edges["body_pre"].to_numpy())
+    post = np.searchsorted(ids, edges["body_post"].to_numpy())
+    weight = edges["weight"].to_numpy().astype(np.float32) * _sign(neurons["consensus_nt"])[pre]
+    return Connectome("malecns-v1.0", neurons, pre.astype(np.int64), post.astype(np.int64), weight)
 
 
 def load_flywire() -> Connectome:
