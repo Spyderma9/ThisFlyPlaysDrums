@@ -1,6 +1,7 @@
 """Co-simulation, one 1 ms step at a time: encoder rates -> brain -> decoder -> body -> contacts.
 
     python -m fly.loop --groove grooves/train/X.mid --alpha 0 --out runs/<id> [--seconds 5] [--shuffled SEED]
+                       [--weights runs/train/<id>/best.pt]   # a trained fly (fly.train)
 
 Writes, all in score time (sim time - the encoder's offset; earlier hits are dropped):
   hits.mid   channel 10, the voice's out_note, velocity from contact speed, note_off 50 ms later
@@ -110,6 +111,7 @@ def main():
     ap.add_argument("--lookahead-ms", type=float, default=None, help="default: fly/strokes.json's lookahead")
     ap.add_argument("--preroll-ms", type=float, default=None, help="default: strokes.PREROLL_MS (the hat closes)")
     ap.add_argument("--burst-ms", type=float, default=BURST_MS)
+    ap.add_argument("--weights", type=Path, default=None, help="trained plastic weights from fly.train (best.pt)")
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
     if args.alpha != 0:
@@ -133,6 +135,10 @@ def main():
     wiring = wire(shuffle_seed=args.shuffled)
     timings["wiring_s"] = perf_counter() - t0
     brain = wiring.brain(device=device)
+    if args.weights is not None:
+        from fly.train import load_weights
+
+        load_weights(brain, args.weights, args.shuffled)
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
     body = Body()
     timings["build_s"] = perf_counter() - t0 - timings["wiring_s"]
@@ -147,6 +153,7 @@ def main():
     meta = {
         "groove": str(args.groove.resolve().relative_to(REPO)) if args.groove.resolve().is_relative_to(REPO) else str(args.groove),
         "alpha": args.alpha, "seed": args.seed, "shuffled": args.shuffled, "device": device,
+        "weights": None if args.weights is None else str(args.weights),
         "offset_ms": enc.offset_ms, "lookahead_ms": lookahead, "preroll_ms": preroll, "burst_ms": args.burst_ms,
         "steps": len(rates), "seconds": args.seconds,
         "wiring": wiring.summary(), "body": {"timestep": body.m.opt.timestep, "substeps": body.substeps},
