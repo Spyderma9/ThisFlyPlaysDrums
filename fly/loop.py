@@ -25,8 +25,14 @@ import torch
 from fly.connectome import REPO
 from fly.drums import DRUM_CHANNEL
 
-LOOKAHEAD_MS = 40.0  # placeholder ~ cue -> motor latency; Phase 3 adds the stroke lead
 BURST_MS = 50.0  # the probe's cue length
+
+
+def default_lookahead_ms() -> float:
+    """Cue -> motor latency + the teacher's stroke lead (fly/strokes.json), so a cue arrives in time to start a stroke."""
+    from fly.strokes import CUE_LATENCY_MS, STROKES
+
+    return json.loads(STROKES.read_text())["lookahead_ms"] if STROKES.exists() else CUE_LATENCY_MS
 NOTE_MS = 50.0
 TICKS_PER_BEAT, TEMPO = 1000, 500_000  # 120 bpm: one tick = 0.5 ms
 
@@ -101,7 +107,8 @@ def main():
     ap.add_argument("--seconds", type=float, default=None, help="stop after this much score time")
     ap.add_argument("--shuffled", type=int, default=None, metavar="SEED", help="degree-preserving shuffled control")
     ap.add_argument("--seed", type=int, default=0, help="Poisson input seed")
-    ap.add_argument("--lookahead-ms", type=float, default=LOOKAHEAD_MS)
+    ap.add_argument("--lookahead-ms", type=float, default=None, help="default: fly/strokes.json's lookahead")
+    ap.add_argument("--preroll-ms", type=float, default=None, help="default: strokes.PREROLL_MS (the hat closes)")
     ap.add_argument("--burst-ms", type=float, default=BURST_MS)
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
@@ -112,10 +119,14 @@ def main():
     from fly.body import Body
     from fly.decoder import Decoder
     from fly.encoder import encode
+    from fly.strokes import PREROLL_MS
     from fly.wiring import wire
 
+    lookahead = args.lookahead_ms if args.lookahead_ms is not None else default_lookahead_ms()
+    preroll = args.preroll_ms if args.preroll_ms is not None else PREROLL_MS
+
     timings, t0 = {}, perf_counter()
-    enc = encode(args.groove, lookahead_ms=args.lookahead_ms, burst_ms=args.burst_ms)
+    enc = encode(args.groove, lookahead_ms=lookahead, burst_ms=args.burst_ms, preroll_ms=preroll)
     rates = enc.rates
     if args.seconds is not None:
         rates = rates[: int((args.seconds * 1000 + enc.offset_ms) / enc.dt_ms)]
@@ -136,7 +147,7 @@ def main():
     meta = {
         "groove": str(args.groove.resolve().relative_to(REPO)) if args.groove.resolve().is_relative_to(REPO) else str(args.groove),
         "alpha": args.alpha, "seed": args.seed, "shuffled": args.shuffled, "device": device,
-        "offset_ms": enc.offset_ms, "lookahead_ms": args.lookahead_ms, "burst_ms": args.burst_ms,
+        "offset_ms": enc.offset_ms, "lookahead_ms": lookahead, "preroll_ms": preroll, "burst_ms": args.burst_ms,
         "steps": len(rates), "seconds": args.seconds,
         "wiring": wiring.summary(), "body": {"timestep": body.m.opt.timestep, "substeps": body.substeps},
         "hits": len(hits), "dropped_before_score_0": len(raw) - len(hits),

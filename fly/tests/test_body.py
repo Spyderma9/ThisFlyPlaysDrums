@@ -1,5 +1,6 @@
 import json
 
+import numpy as np
 import pytest
 
 pytest.importorskip("mujoco")
@@ -8,6 +9,7 @@ pytest.importorskip("flybody")
 from fly.body import Body, strike  # noqa: E402
 from fly.decoder import JOINTS, KIT  # noqa: E402
 from fly.drums import LEGS  # noqa: E402
+from fly.strokes import STROKES  # noqa: E402
 
 KIT_DATA = json.loads(KIT.read_text())
 PADS = {p["name"]: p for p in KIT_DATA["pads"]}
@@ -40,16 +42,25 @@ def test_scripted_stick_into_pad_gives_one_hit(body):
     assert [(h.note, h.voice) for h in hits] == [(36, "kick")]
 
 
+@pytest.mark.skipif(not STROKES.exists(), reason="run python -m fly.strokes --calibrate")
 def test_hat_note_follows_the_pedal(body):
+    pedal = json.loads(STROKES.read_text())["pads"]["hat_pedal"]["legs"]["hind_left"]
+    lift, hold, chick = (np.array(pedal[k]) for k in ("raise", "soft", "hard"))
     hat = PADS["hat"]["reach"]["front_right"]
     body.reset()
-    open_hits = strike(body, "front_right", hat)
-    assert [h.note for h in open_hits] == [46]
+    assert [h.note for h in strike(body, "front_right", hat)] == [46]  # pedal up: open
 
     body.reset()
-    pressed = _with(body.rest, "hind_left", PADS["hat_pedal"]["reach"]["hind_left"])
-    hits = sum((body.step(pressed) for _ in range(80)), [])
-    assert [h.note for h in hits] == [44]  # the pedal press itself
-    both = _with(pressed, "front_right", hat)
+    hits = sum((body.step(_with(body.rest, "hind_left", lift)) for _ in range(60)), [])
+    for k in range(120):  # a slow close is silent
+        a = min(1.0, k / 100)
+        hits += body.step(_with(body.rest, "hind_left", (1 - a) * lift + a * hold))
+    assert hits == []
+    both = _with(_with(body.rest, "hind_left", hold), "front_right", hat)
     hits = sum((body.step(both) for _ in range(60)), [])
     assert [(h.note, h.voice) for h in hits] == [(42, "hat_closed")]
+
+    body.reset()
+    sum((body.step(_with(body.rest, "hind_left", lift)) for _ in range(60)), [])
+    hits = sum((body.step(_with(body.rest, "hind_left", chick)) for _ in range(40)), [])
+    assert [(h.note, h.voice) for h in hits] == [(44, "hat_pedal")]  # a hard press is the pedal note

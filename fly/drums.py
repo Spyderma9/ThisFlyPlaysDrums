@@ -33,7 +33,7 @@ VOICES: tuple[Voice, ...] = (
     Voice("tom1", frozenset({48, 50}), 48, ("front_right", "front_left")),  # toms alternate sticks
     Voice("tom2", frozenset({45, 47}), 45, ("front_right", "front_left")),
     Voice("tom3", frozenset({43, 58}), 43, ("front_right", "front_left")),
-    Voice("crash", frozenset({49, 55}), 49, ("front_right",)),
+    Voice("crash", frozenset({49, 55}), 49, ("front_right", "front_left")),  # left when the right is busy
     Voice("ride", frozenset({51, 59}), 51, ("front_right",)),
     Voice("ride_bell", frozenset({53}), 53, ("front_right",)),
 )

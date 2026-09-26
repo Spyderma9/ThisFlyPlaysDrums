@@ -52,9 +52,11 @@ def encode_onsets(
     rate_min_hz: float = 50.0,
     rate_max_hz: float = 200.0,
     tail_ms: float = 500.0,
+    preroll_ms: float = 0.0,
 ) -> Encoded:
-    """Rate envelopes for already-parsed onsets. Bursts start `lookahead_ms` before each note."""
-    offset_ms = lookahead_ms  # so a note at score time 0 still gets its full early cue
+    """Rate envelopes for already-parsed onsets. Bursts start `lookahead_ms` before each note.
+    preroll_ms: extra silent sim time before score time 0 (e.g. to close the hi-hat before the music starts)."""
+    offset_ms = lookahead_ms + preroll_ms  # so a note at score time 0 still gets its full early cue
     last_ms = max((t * 1000 for hits in onsets.values() for t, _ in hits), default=0.0)
     n_steps = int(np.ceil((last_ms + offset_ms + tail_ms) / dt_ms))
     rates = np.zeros((n_steps, len(VOICE_NAMES)), dtype=np.float32)

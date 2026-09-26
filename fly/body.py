@@ -11,8 +11,9 @@ A hit only counts on contact between a pad and the fly (a stick or a playing leg
   (hind right = kick, hind left = hi-hat). Only playing-leg and stick geoms collide with the kit.
 - Control: Body.step(targets[32]) sets the 32 leg servos (drums.LEGS x decoder.JOINTS) and runs 1 ms of physics.
   Every other actuator holds flybody's rest pose (joint springref).
-- Hits: a pad's first contact after a gap records a hit, then the pad is refractory for REFRACTORY_MS. The hat pad
-  sounds 42 while the hind-left leg is on the hat pedal, else 46. Pedal presses send 36 (kick) and 44 (hat).
+- Hits: a pad's first contact after DEBOUNCE_MS untouched records a hit, then the pad is refractory for REFRACTORY_MS. The hat pad
+  sounds 42 while the hind-left leg is on the hat pedal, else 46. Pedal presses send 36 (kick) and 44 (hat), but a
+  hat-pedal press slower than PEDAL_CHICK_CM_S is silent: it only closes the hat.
 
     python -m fly.body --build-kit   # measure joint signs, place the kit, check reach; writes fly/kit.json
     python -m fly.body --bench       # scripted strokes at 1e-4 vs 2e-4 s: hits, drift and speed
@@ -43,16 +44,18 @@ STICK_DIR = {"front_left": (1.0, -0.3, -0.35), "front_right": (1.0, 0.3, -0.35)}
 READY = {"front": {"femur": 0.5}, "hind": {}}  # playing-leg joint angles at rest (rad); unlisted joints are 0
 PAD_HALF = (0.015, 0.015, 0.002)
 PEDAL_HALF = (0.02, 0.02, 0.002)
-PAD_GAP = 0.01  # cm between pad edges
-DROP_MIN, DROP_MAX = 0.015, 0.06  # cm a pad sits below the rest tip of the stick (or foot) that plays it
+PAD_GAP = 0.015  # cm between pad edges
+DROP_MIN, DROP_MAX = 0.015, 0.045  # cm a pad sits below the rest tip of the stick (or foot) that plays it
 CLEARANCE = 0.005  # cm between a pad and the fly at rest
 KIT_BIT = 2  # collision bit shared by the kit and the playing legs
 REFRACTORY_MS = 30.0
-VEL_PER_CM_S = 40.0  # MIDI velocity per cm/s of normal contact speed; the servos lag ~10 ms, so strikes are a few cm/s
+DEBOUNCE_MS = 10.0  # a pad must have been untouched this long for a new contact to count (no chatter re-triggers)
+PEDAL_CHICK_CM_S = 0.8  # a hat-pedal press this fast or faster sends 44; a slower one just closes the hat
+VEL_PER_CM_S = 45.0  # MIDI velocity per cm/s of normal contact speed: the teacher strokes span ~0.5-2.8 cm/s
 # stick pads in placement order (most played first), with the legs that play each; then pedals
-STICK_PADS = {"snare": ("front_left",), "hat": ("front_right",), "tom1": STICK_LEGS, "tom2": STICK_LEGS,
-              "tom3": STICK_LEGS, "ride": ("front_right",), "crash": ("front_right",),
-              "ride_bell": ("front_right",), "xstick": ("front_left",)}
+STICK_PADS = {"snare": ("front_left",), "hat": ("front_right",), "crash": STICK_LEGS, "tom1": STICK_LEGS,
+              "tom2": STICK_LEGS, "tom3": STICK_LEGS, "ride": ("front_right",), "ride_bell": ("front_right",),
+              "xstick": ("front_left",)}  # crash: either stick, so it can sound with the hat or ride
 PEDALS = {"kick": "hind_right", "hat_pedal": "hind_left"}
 VOICE = {v.name: v for v in VOICES}
 # anatomical "+" of each joint (decoder.MN_JOINT's direction) as a geometric test on the leg tip
@@ -112,6 +115,7 @@ def build_spec(kit: dict | None = None) -> mujoco.MjSpec:
                         fromto=[*grip, *tip], mass=STICK_MASS, contype=1 | KIT_BIT, conaffinity=1 | KIT_BIT,
                         condim=1, group=1, rgba=[0.78, 0.6, 0.38, 1])
         tarsus.add_site(name=f"stick_tip_{leg}", pos=tip, size=[0.004, 0, 0])
+        tarsus.add_site(name=f"stick_grip_{leg}", pos=grip, size=[0.002, 0, 0])
     for p in (kit or {}).get("pads", ()):
         quat = np.zeros(4)
         mujoco.mju_quatZ2Vec(quat, np.array(p["normal"], dtype=float))
@@ -233,6 +237,7 @@ class Body:
         self.t_ms = 0.0
         self.touching = np.zeros(len(self.pads), dtype=bool)
         self.last_hit = np.full(len(self.pads), -np.inf)
+        self.last_touch = np.full(len(self.pads), -np.inf)
 
     @property
     def rest(self) -> np.ndarray:
@@ -273,11 +278,14 @@ class Body:
                 now[p] = True
         hits = []
         for p in np.flatnonzero(now & ~self.touching):
-            if t_ms - self.last_hit[p] >= REFRACTORY_MS:
+            if p == self.hat_pedal and speed[p] < PEDAL_CHICK_CM_S:
+                continue  # a gentle close is silent, like the TD-07's pedal
+            if t_ms - self.last_hit[p] >= REFRACTORY_MS and t_ms - self.last_touch[p] >= DEBOUNCE_MS:
                 self.last_hit[p] = t_ms
                 voice = VOICE[pad_voice(self.pads[p], now[self.hat_pedal])]
                 hits.append(Hit(t_ms, self.pads[p], voice.name, voice.out_note,
                                 int(np.clip(round(VEL_PER_CM_S * speed[p]), 1, 127)), float(speed[p]), LEGS[limb[p]]))
+        self.last_touch[self.touching] = t_ms - self.dt_ms  # the last substep each released pad was still touched
         self.touching = now
         return hits
 
@@ -300,27 +308,48 @@ def _driven(mn_types: dict[str, list[str]]) -> dict[tuple[str, str], set[int]]:
     return directions(mn_types)
 
 
-def _workspace(m, leg: str, signs: dict, allowed: dict, n: int, rng) -> tuple[np.ndarray, np.ndarray]:
-    """Random decoder-reachable configurations of one leg -> (servo targets [n, 8], tip positions [n, 3]).
-    A joint moves only in the anatomical directions its motor neurons can drive; tarsus2 stays at rest."""
+def tip_site(leg: str) -> str:
+    return f"stick_tip_{leg}" if leg in STICK_LEGS else f"claw_{SUFFIX[leg]}"
+
+
+def joint_bounds(signs: dict, allowed: dict, leg: str) -> np.ndarray:
+    """[8, 2] angle bounds the decoder can reach per joint of a leg: a joint moves only in the anatomical directions
+    its motor neurons drive (one-sided joints stop at rest); undriven joints and tarsus2 stay at rest.
+    signs: {servo name: {sign, range, rest}} (kit actuators); allowed: {(leg, joint): {+1, -1}}."""
+    out = np.zeros((len(JOINTS), 2))
+    for j, joint in enumerate(JOINTS):
+        info = signs[f"{joint}_{SUFFIX[leg]}"]
+        lo, hi, rest = *info["range"], info["rest"]
+        dirs = allowed.get((leg, joint), set()) if joint != "tarsus2" else set()
+        angle_dirs = {s * info["sign"] for s in dirs}
+        out[j] = (lo if -1 in angle_dirs else rest), (hi if 1 in angle_dirs else rest)
+    return out
+
+
+def _workspace(m, leg: str, signs: dict, allowed: dict, n: int, rng):
+    """Random decoder-reachable configurations of one leg -> (servo targets [n, 8], tip positions [n, 3],
+    stick grip positions [n, 3]; the tip again for a leg without a stick)."""
     d = mujoco.MjData(m)
-    site = m.site(f"stick_tip_{leg}" if leg in STICK_LEGS else f"claw_{SUFFIX[leg]}").id
-    qs, tips = np.zeros((n, len(JOINTS))), np.zeros((n, 3))
+    site = m.site(tip_site(leg)).id
+    grip = m.site(f"stick_grip_{leg}").id if leg in STICK_LEGS else site
+    bounds = joint_bounds(signs, allowed, leg)
+    qs, tips, grips = np.zeros((n, len(JOINTS))), np.zeros((n, 3)), np.zeros((n, 3))
     rest_pose(m, d)
     base = d.qpos.copy()
     for k in range(n):
         d.qpos[:] = base
+        qs[k] = rng.uniform(bounds[:, 0], bounds[:, 1])
         for j, joint in enumerate(JOINTS):
-            info = signs[f"{joint}_{SUFFIX[leg]}"]
-            lo, hi, rest = *info["range"], info["rest"]
-            dirs = allowed.get((leg, joint), set()) if joint != "tarsus2" else set()
-            angle_dirs = {s * info["sign"] for s in dirs}
-            a, b = (lo if -1 in angle_dirs else rest), (hi if 1 in angle_dirs else rest)
-            qs[k, j] = rng.uniform(a, b) if b > a else rest
             _set(m, d, leg, joint, qs[k, j])
         mujoco.mj_kinematics(m, d)
-        tips[k] = d.site_xpos[site]
-    return qs, tips
+        tips[k], grips[k] = d.site_xpos[site], d.site_xpos[grip]
+    return qs, tips, grips
+
+
+def _seg_dist(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    ab = b - a
+    t = np.clip(np.dot(p - a, ab) / max(np.dot(ab, ab), 1e-12), 0, 1)
+    return float(np.linalg.norm(p - (a + t * ab)))
 
 
 def _clearance(m, d, p: np.ndarray) -> float:
@@ -339,7 +368,8 @@ def _clearance(m, d, p: np.ndarray) -> float:
 
 def place_kit(m, signs: dict, allowed: dict, n: int = 6000, seed: int = 0) -> list[dict]:
     """Drums face up under the READY stick tips, between DROP_MIN and DROP_MAX below them, each at a point the
-    decoder can reach, packed around the playing stick's rest tip (toms around both). Pedals go under the hind feet."""
+    decoder can reach, packed around the playing stick's rest tip (toms around both). Pedals go under the hind feet.
+    A stick striking one pad must keep its shaft clear of every other pad."""
     from scipy.spatial import cKDTree
 
     rng = np.random.default_rng(seed)
@@ -349,24 +379,36 @@ def place_kit(m, signs: dict, allowed: dict, n: int = 6000, seed: int = 0) -> li
     rest_tip = {leg: d.site_xpos[m.site(f"stick_tip_{leg}" if leg in STICK_LEGS else f"claw_{SUFFIX[leg]}").id].copy()
                 for leg in LEGS}
     pads: list[dict] = []
+    shafts: list[tuple[np.ndarray, np.ndarray]] = []  # stick shafts (grip, tip) at every placed pad's strike
     up = [0.0, 0.0, 1.0]
 
+    def radius(half):
+        return float(np.linalg.norm(half[:2]))
+
     def free(p, half):
-        r = float(np.linalg.norm(half[:2]))
-        return _clearance(m, d, p) >= r + CLEARANCE and all(
-            np.linalg.norm(np.array(q["pos"]) - p) >= r + np.linalg.norm(q["half"][:2]) + PAD_GAP for q in pads)
+        r = radius(half)
+        return (_clearance(m, d, p) >= r + CLEARANCE
+                and all(np.linalg.norm(np.array(q["pos"]) - p) >= r + radius(q["half"]) + PAD_GAP for q in pads)
+                and all(_seg_dist(p, a, b) >= r + STICK_RADIUS + CLEARANCE for a, b in shafts))
 
     def add(name, kind, legs, pts, half):
         home = np.mean([rest_tip[leg] for leg in legs], axis=0)
         for k in np.argsort(np.linalg.norm((pts - home)[:, :2], axis=1)):  # nearest to straight below home
-            if free(pts[k], half):
-                reach = {}
-                for leg in legs:
-                    j = int(np.argmin(np.linalg.norm(ws[leg][1] - pts[k], axis=1)))
-                    reach[leg] = [round(float(x), 4) for x in ws[leg][0][j]]
-                pads.append({"name": name, "kind": kind, "legs": list(legs), "pos": [round(float(x), 5) for x in pts[k]],
-                             "normal": up, "half": list(half), "reach": reach})
-                return
+            if not free(pts[k], half):
+                continue
+            reach, mine = {}, []
+            for leg in legs:
+                j = int(np.argmin(np.linalg.norm(ws[leg][1] - pts[k], axis=1)))
+                reach[leg] = [round(float(x), 4) for x in ws[leg][0][j]]
+                if leg in STICK_LEGS:
+                    mine.append((ws[leg][2][j], ws[leg][1][j]))
+            if any(_seg_dist(np.array(q["pos"]), a, b) < radius(q["half"]) + STICK_RADIUS + CLEARANCE
+                   for q in pads for a, b in mine):
+                continue
+            shafts.extend(mine)
+            pads.append({"name": name, "kind": kind, "legs": list(legs), "pos": [round(float(x), 5) for x in pts[k]],
+                         "normal": up, "half": list(half), "reach": reach})
+            return
         raise RuntimeError(f"no free reachable spot for {name}")
 
     for name, legs in STICK_PADS.items():
