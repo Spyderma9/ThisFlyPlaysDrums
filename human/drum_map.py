@@ -41,9 +41,21 @@ GRID_NAMES = {
 }
 
 
-def normalize(note):
+# Sheet music uses GM drum names, where some numbers mean something else on the TD-07
+# (GM 40 is "electric snare", the TD-07's snare rim; GM 47/50 are toms, the TD-07's tom rims).
+# Only applied to sheet music, never to kit takes.
+SHEET_GM_TO_TD07 = {
+    **GM_TO_TD07,
+    40: 38,          # electric snare -> snare
+    50: 48, 47: 45,  # high tom -> tom1, low-mid tom -> tom2
+    55: 49,          # splash -> crash
+    59: 51,          # ride 2 -> ride
+}
+
+
+def normalize(note, sheet=False):
     """Map a GM drum note onto the TD-07 map. Returns (note, known)."""
-    note = GM_TO_TD07.get(note, note)
+    note = (SHEET_GM_TO_TD07 if sheet else GM_TO_TD07).get(note, note)
     return note, note in DRUMS
 
 

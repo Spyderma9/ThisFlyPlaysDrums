@@ -95,12 +95,21 @@ def read_musicxml(path, bpm_override):
         divisions = 1
         for idx, measure in enumerate(part.iter("measure")):
             if idx == len(measures):
-                measures.append({"len": 0.0, "hits": [], "tempos": []})
+                measures.append({"len": 0.0, "hits": [], "tempos": [], "forward": False,
+                                 "backward": 0, "endings": set()})
             m = measures[idx]
             pos, last_start, measure_len = 0, 0, 0
             for el in measure:
                 if el.tag == "attributes" and el.find("divisions") is not None:
                     divisions = int(el.find("divisions").text)
+                elif el.tag == "barline":
+                    rep, end = el.find("repeat"), el.find("ending")
+                    if rep is not None and rep.get("direction") == "forward":
+                        m["forward"] = True
+                    elif rep is not None:
+                        m["backward"] = int(rep.get("times", 2))
+                    if end is not None:
+                        m["endings"] |= {int(n) for n in end.get("number", "").replace(",", " ").split() if n.isdigit()}
                 elif el.tag in ("direction", "sound"):
                     snd = el if el.tag == "sound" else el.find(".//sound")
                     if snd is not None and snd.get("tempo"):
@@ -129,7 +138,8 @@ def read_musicxml(path, bpm_override):
     raw = []      # (quarter_offset, note, velocity)
     tempos = {}   # quarter_offset -> bpm
     q = 0.0
-    for m in measures:
+    for idx in play_order(measures):
+        m = measures[idx]
         raw += [(q + rel, note, DEFAULT_VELOCITY) for rel, note in m["hits"]]
         tempos.update({q + rel: bpm for rel, bpm in m["tempos"]})
         q += m["len"]
@@ -138,6 +148,31 @@ def read_musicxml(path, bpm_override):
         tempos = {0.0: bpm_override}
     tempos.setdefault(0.0, 120.0)
     return quarters_to_ms(raw, tempos), quarters_to_ms([(q, 0, 0)], tempos)[0][0]
+
+
+def play_order(measures):
+    """Expand repeat signs and 1st/2nd endings into the order measures are played."""
+    order, i, start, rep_pass, jumps, jumped = [], 0, 0, 1, {}, False
+    while i < len(measures):
+        m = measures[i]
+        if m["forward"] and not jumped:
+            start, rep_pass = i, 1
+        jumped = False
+        if m["endings"] and rep_pass not in m["endings"]:
+            i += 1  # volta for a different pass
+            continue
+        order.append(i)
+        if m["backward"]:
+            done = jumps.get(i, 1)
+            if done < m["backward"]:
+                jumps[i] = done + 1
+                rep_pass = done + 1
+                i, jumped = start, True
+                continue
+            # Like MuseScore, a later backward repeat with no forward sign of its own
+            # goes back to the last forward sign (or the start of the piece).
+        i += 1
+    return order
 
 
 def quarters_to_ms(raw, tempos):
@@ -192,7 +227,7 @@ def convert(path, bpm=None, repeat=1):
     for rep in range(repeat):
         offset = rep * length_ms
         for t, note, vel in hits:
-            note, known = normalize(note)
+            note, known = normalize(note, sheet=ext != ".txt")  # grid rows already use TD-07 notes
             if not known:
                 unknown.add(note)
             events.append((offset + t, mido.Message("note_on", channel=DRUM_CHANNEL, note=note, velocity=vel)))
