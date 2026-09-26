@@ -1,0 +1,14 @@
+# Funk groove with 16th-note hats, ghost notes and an open hat, then a tom fill.
+bpm 92
+steps 16
+
+HH  xxxxxxxxxxxxxx-- | xxxxxxxxxxxxxx--
+HO  --------------x- | --------------x-
+SD  ----X--o-o--X--o | ----X--o-o--X--o
+BD  x-x-------x--x-- | x-x-------x--x--
+
+HH  xxxxxxxx--------
+SD  ----X---XxXx----
+T1  ------------xx--
+T3  --------------xx
+BD  x-x-------------
