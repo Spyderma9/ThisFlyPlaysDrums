@@ -72,6 +72,24 @@ def test_loss_ignores_undrivable_servos_and_weights_strokes():
     assert miss_at_rest > 0 and miss_in_stroke == pytest.approx(5 * miss_at_rest)  # weight 1 + ACTIVE_W
 
 
+def test_rest_on_pedal_holds_the_hat_closed_at_rest_and_keeps_ranges():
+    from fly.strokes import STROKES
+    from fly.train import rest_on_pedal
+
+    dec = _decoder(40)
+    strokes = json.loads(STROKES.read_text())
+    rest0, lo0, hi0 = dec.rest.clone(), (dec.rest - dec.down).clone(), (dec.rest + dec.up).clone()
+    rest_on_pedal(dec, strokes)
+    k, n = LEGS.index("hind_left") * len(JOINTS), len(JOINTS)
+    press = torch.tensor(strokes["pads"]["hat_pedal"]["legs"]["hind_left"]["soft"])
+    q = dec.targets(dec.init_state(1))[0]  # no motor activity
+    assert torch.allclose(q[k:k + n], torch.minimum(torch.maximum(press, lo0[k:k + n]), hi0[k:k + n]))
+    other = torch.ones(32, dtype=torch.bool)
+    other[k:k + n] = False
+    assert torch.allclose(q[other], rest0[other])  # the other legs keep their rest
+    assert torch.allclose(dec.rest - dec.down, lo0, atol=1e-3) and torch.allclose(dec.rest + dec.up, hi0, atol=1e-3)
+
+
 @pytest.mark.skipif(not FLYBRAIN_CODE.exists(), reason="fly-brain not cloned into fly/vendor/")
 def test_one_update_trains_only_the_plastic_edge_and_keeps_its_sign(tmp_path):
     """cue 0 -> (plastic) relay 1 -> the front-left Ti flexor motor neurons 10, 11."""

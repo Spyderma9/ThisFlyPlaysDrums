@@ -2,15 +2,16 @@
 
 Never used on held-out grooves. The fly only ever sees q* through the loss and alpha * I* (Phase 4).
 
-1. Poses (--calibrate -> fly/strokes.json): per pad and leg, damped-least-squares IK on the tip site (stick tip, or
+1. Poses (--calibrate -> fly/strokes.json): per strike target (kit pad["targets"]: pad centres, the ride's bow, and the
+   cross-stick and bell zones) and leg, damped-least-squares IK on the tip site (stick tip, or
    claw for pedals) over the joints the decoder can drive (body.joint_bounds), so every pose is one the fly could
    produce. soft strike = tip DEPTH_CM into the pad; raise = tip RAISE_CM above it (toward the stick's rest tip if
    straight up is out of reach); hard strike = the swing continued FOLLOW_THROUGH past the soft target. The servos lag
    ~10 ms, so contact speed, and so loudness, follows how far past the surface the target sits. Timing is
    measured on the body: for velocities 1 to 127 (CAL_VELOCITIES), how long after the swing command the contact lands, how fast.
-2. Sticking (plan): right stick for hat, ride and bell; left for snare and cross-stick; the crash and toms to the
-   stick on their side (the right for the crash; the more rested stick for a tom in the middle) unless it is busy,
-   and never a second stick whose calibrated stroke clips other pads. Notes within MIN_GAP_MS on one stick are resolved most
+2. Sticking (plan): no drum belongs to one hand. Each target goes to the stick on its side (the right for the crash;
+   the more rested stick for one in the middle), or to the other stick when that one is busy and the pad is within
+   both sticks' reach, but never a second stick whose calibrated stroke clips other pads. Notes within MIN_GAP_MS on one stick are resolved most
    constrained first, then by PRIORITY; what can't be played is dropped and reported.
 3. Stroke (teacher): raise (height and strike depth grow with velocity) for T_RAISE_MS -> swing to the strike pose, timed so contact
    lands on the note -> hold T_HOLD_MS -> the next stroke's raise, or (if it is more than REST_GAP_MS away) back up
@@ -97,18 +98,23 @@ def _run(body, targets, ms: int) -> list:
     return sum((body.step(targets) for _ in range(ms)), [])
 
 
-def _strike_timing(body, pad: str, leg: str, q_raise, q_strike, settle_ms: int = 60, max_ms: int = 40) -> dict:
+def sounds(hit, target: str) -> bool:
+    """Does this hit play `target` (a strokes.json pad key)? The hat target is either hat note; zones must match."""
+    return hit.pad == "hat" if target == "hat" else hit.voice == target
+
+
+def _strike_timing(body, target: str, leg: str, q_raise, q_strike, settle_ms: int = 60, max_ms: int = 40) -> dict:
     """The whole stroke from rest: raise, strike, back through the raise to rest. -> ms from the swing command until
-    this pad sounds, contact speed, and any other hit (another pad, or this one again) as strays."""
+    the target sounds, contact speed, and any other hit (another pad or zone, or this one again) as strays."""
     body.reset()
-    stray = [h.pad for h in _run(body, _leg_targets(body, leg, q_raise), settle_ms)]
+    stray = [h.voice for h in _run(body, _leg_targets(body, leg, q_raise), settle_ms)]
     t0 = body.t_ms
     hits = _run(body, _leg_targets(body, leg, q_strike), max_ms)
     hits += _run(body, _leg_targets(body, leg, q_raise), T_RAISE_MS) + _run(body, body.rest, 60)
-    mine = [h for h in hits if h.pad == pad]
+    mine = [h for h in hits if sounds(h, target)]
     return {"latency_ms": round(mine[0].t_ms - t0, 2) if mine else None,
             "speed_cm_s": round(mine[0].contact_speed, 3) if mine else None,
-            "stray": stray + [h.pad for h in hits if h is not (mine[0] if mine else None)]}
+            "stray": stray + [h.voice for h in hits if h is not (mine[0] if mine else None)]}
 
 
 def _pedal_timing(body, q_lift, q_press, q_chick) -> dict:
@@ -146,11 +152,12 @@ def calibrate() -> dict:
            "raise_cm": RAISE_CM, "depth_cm": DEPTH_CM, "follow_through": FOLLOW_THROUGH, "heights": HEIGHTS, "pads": {}}
     body.reset()
     rest_tip = {leg: body.d.site_xpos[body.m.site(tip_site(leg)).id].copy() for leg in LEGS}
-    for p in kit["pads"]:
-        n, top = np.array(p["normal"]), np.array(p["pos"]) + np.array(p["normal"]) * p["half"][2]
-        y = p["pos"][1]
-        legs = sorted(p["legs"], key=lambda leg: (leg != "front_right") if p["name"] == "crash" or y < 0 else leg != "front_left")
-        pad = out["pads"][p["name"]] = {"either": p["name"] != "crash" and len(legs) > 1 and abs(y) < MIDDLE_CM, "legs": {}}
+    targets = [(p, name, np.array(point)) for p in kit["pads"] for name, point in p["targets"].items()]
+    for p, name, top in targets:  # one entry per strike point: pad centres, the ride's bow, and the zones
+        n = np.array(p["normal"])
+        y = float(top[1])
+        legs = sorted(p["legs"], key=lambda leg: (leg != "front_right") if name == "crash" or y < 0 else leg != "front_left")
+        pad = out["pads"][name] = {"either": name != "crash" and len(legs) > 1 and abs(y) < MIDDLE_CM, "legs": {}}
         for leg in legs:
             bounds = joint_bounds(signs, allowed, leg)
             soft, e1 = ik(body.m, leg, top - n * DEPTH_CM, p["reach"][leg], bounds)
@@ -167,11 +174,11 @@ def calibrate() -> dict:
                 hard = np.clip(soft + FOLLOW_THROUGH * (soft - raise_), bounds[:, 0], bounds[:, 1])  # keep swinging past
                 entry = {"soft": soft.round(4).tolist(), "hard": hard.round(4).tolist(), "raise": raise_.round(4).tolist(),
                          "ik_error_cm": [round(e1, 5), round(e3, 5)]}
-                if p["name"] == "hat_pedal":
+                if name == "hat_pedal":
                     entry["pedal"] = _pedal_timing(body, raise_, soft, hard)
                     best = (0, entry)
                     break
-                entry["timing"] = {str(v): _strike_timing(body, p["name"], leg, *stroke_poses(entry, v)) for v in CAL_VELOCITIES}
+                entry["timing"] = {str(v): _strike_timing(body, name, leg, *stroke_poses(entry, v)) for v in CAL_VELOCITIES}
                 entry["strays"] = sum(len(t["stray"]) + 3 * (t["latency_ms"] is None) for t in entry["timing"].values())
                 if best is None or entry["strays"] < best[0]:
                     best = (entry["strays"], entry)
@@ -180,7 +187,7 @@ def calibrate() -> dict:
             entry = best[1]
             pad["legs"][leg] = entry
             t = entry.get("timing") or {"44": entry["pedal"]}
-            print(f"  {p['name']:10s} {leg:11s} ik {entry['ik_error_cm']} cm  " + "  ".join(
+            print(f"  {name:10s} {leg:11s} ik {entry['ik_error_cm']} cm  " + "  ".join(
                 f"v{v}: {x['latency_ms']} ms {x['speed_cm_s']} cm/s{' stray ' + ','.join(x['stray']) if x['stray'] else ''}"
                 for v, x in t.items()), flush=True)
         if len(pad["legs"]) > 1:  # a stick that clips other pads plays it only when the cleaner one is busy
@@ -227,8 +234,10 @@ def plan(onsets: dict[str, list[tuple[float, int]]], offset_ms: float, pads: dic
             def gap(leg):
                 return min((abs(n.t_ms - t) for t in busy[leg]), default=np.inf)
             pad = pads[pad_of(n.voice)]
-            free = [leg for leg, e in pad["legs"].items()  # preference order; never a stroke that clips other pads
-                    if gap(leg) >= MIN_GAP_MS and (e.get("strays", 0) <= MAX_STRAYS or len(pad["legs"]) == 1)]
+            # preference order; never a stroke that clips other pads, unless every stick's does: then the cleanest
+            clean = [leg for leg, e in pad["legs"].items() if e.get("strays", 0) <= MAX_STRAYS]
+            clean = clean or [min(pad["legs"], key=lambda leg: pad["legs"][leg].get("strays", 0))]
+            free = [leg for leg in clean if gap(leg) >= MIN_GAP_MS]
             if not free:
                 n.dropped = "stick busy"
                 continue

@@ -135,11 +135,14 @@ def main():
     wiring = wire(shuffle_seed=args.shuffled)
     timings["wiring_s"] = perf_counter() - t0
     brain = wiring.brain(device=device)
-    if args.weights is not None:
-        from fly.train import load_weights
-
-        load_weights(brain, args.weights, args.shuffled)
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
+    from fly.strokes import STROKES
+    from fly.train import load_weights, rest_on_pedal
+
+    ck = load_weights(brain, args.weights, args.shuffled) if args.weights is not None else None
+    on_pedal = ck is None or ck.get("rest_on_pedal", False)  # same posture as training; untrained runs match new ones
+    if on_pedal:
+        rest_on_pedal(decoder, json.loads(STROKES.read_text()))
     body = Body()
     timings["build_s"] = perf_counter() - t0 - timings["wiring_s"]
     print(f"{wiring.conn.name}: {len(rates)} steps on {device}, body dt {body.m.opt.timestep:g} s", flush=True)
@@ -153,7 +156,7 @@ def main():
     meta = {
         "groove": str(args.groove.resolve().relative_to(REPO)) if args.groove.resolve().is_relative_to(REPO) else str(args.groove),
         "alpha": args.alpha, "seed": args.seed, "shuffled": args.shuffled, "device": device,
-        "weights": None if args.weights is None else str(args.weights),
+        "weights": None if args.weights is None else str(args.weights), "rest_on_pedal": on_pedal,
         "offset_ms": enc.offset_ms, "lookahead_ms": lookahead, "preroll_ms": preroll, "burst_ms": args.burst_ms,
         "steps": len(rates), "seconds": args.seconds,
         "wiring": wiring.summary(), "body": {"timestep": body.m.opt.timestep, "substeps": body.substeps},

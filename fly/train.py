@@ -49,6 +49,25 @@ class Take:
     dropped: int
 
 
+def rest_on_pedal(decoder, strokes: dict) -> None:
+    """The hind-left foot rests on the hi-hat pedal, held closed, like a drummer's: that becomes the leg's rest pose,
+    so motor activity only has to lift it (open hats, chicks). The fly's cues are bursts, so it can't hold a pose for
+    minutes; without this the teacher's held pedal was 82% of the loss. Fixed posture, the same for every groove.
+    Training and fly.loop both apply it, so the fly is tested in the posture it learned in."""
+    from fly.decoder import JOINTS
+    from fly.drums import LEGS
+
+    k = LEGS.index("hind_left") * len(JOINTS)
+    lo, hi = decoder.rest - decoder.down, decoder.rest + decoder.up
+    rest = decoder.rest.clone()
+    rest[k:k + len(JOINTS)] = torch.as_tensor(strokes["pads"]["hat_pedal"]["legs"]["hind_left"]["soft"], dtype=rest.dtype)
+    rest = torch.minimum(torch.maximum(rest, lo), hi)
+    with torch.no_grad():
+        decoder.rest.copy_(rest)
+        decoder.up.copy_((hi - rest).clamp(min=1e-3))
+        decoder.down.copy_((rest - lo).clamp(min=1e-3))
+
+
 def load_take(path: str, strokes: dict, rest: np.ndarray, lookahead_ms: float, burst_ms: float, preroll_ms: float) -> Take:
     from fly.encoder import encode, read_onsets
     from fly.strokes import plan, teacher
@@ -177,7 +196,8 @@ def main():
     if held_out or not takes_paths:
         raise SystemExit(f"never train on held-out grooves: {held_out}" if held_out else f"no takes match {args.takes}")
     lookahead = default_lookahead_ms()
-    settings = {"shuffle_seed": args.shuffled, "lookahead_ms": lookahead, "burst_ms": BURST_MS, "preroll_ms": PREROLL_MS}
+    settings = {"shuffle_seed": args.shuffled, "lookahead_ms": lookahead, "burst_ms": BURST_MS, "preroll_ms": PREROLL_MS,
+                "rest_on_pedal": True}
 
     t0 = perf_counter()
     wiring = wire(shuffle_seed=args.shuffled)
@@ -185,9 +205,10 @@ def main():
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
     if args.init is not None:
         load_weights(brain, args.init, args.shuffled)
+    strokes = json.loads(STROKES.read_text())
+    rest_on_pedal(decoder, strokes)
     loss_fn = Loss(decoder)
     rest = decoder.rest.cpu().numpy()
-    strokes = json.loads(STROKES.read_text())
     takes = [load_take(p, strokes, rest, lookahead, BURST_MS, PREROLL_MS) for p in takes_paths]
     print(f"{wiring.conn.name}{'' if args.shuffled is None else f' shuffled {args.shuffled}'}: "
           f"{int(wiring.plastic_mask.sum())} plastic edges, {len(takes)} takes "
