@@ -1,4 +1,4 @@
-"""TD-07 drum note map and shared MIDI helpers."""
+"""Shared drum note map and MIDI helpers, so kit takes and sheet music use identical notes."""
 from collections import defaultdict
 
 import mido
@@ -20,6 +20,31 @@ DRUMS = {
     49: "crash", 55: "crash_edge",
     51: "ride", 59: "ride_edge", 53: "ride_bell",
 }
+
+# General MIDI notes that notation apps use but the TD-07 map doesn't, folded onto the nearest TD-07 pad.
+GM_TO_TD07 = {
+    35: 36,          # acoustic bass drum -> kick
+    39: 38,          # hand clap -> snare
+    41: 43,          # low floor tom -> tom3
+    52: 49, 57: 49,  # china, crash 2 -> crash
+    54: 42,          # tambourine -> closed hat
+    56: 53,          # cowbell -> ride bell
+}
+
+# Short row names for text drum grids.
+GRID_NAMES = {
+    "BD": 36, "K": 36, "KICK": 36,
+    "SD": 38, "SN": 38, "SNARE": 38, "RIM": 40, "RS": 40, "XS": 37,
+    "HH": 42, "HC": 42, "HO": 46, "HP": 44,
+    "T1": 48, "T2": 45, "T3": 43, "FT": 43,
+    "CR": 49, "CC": 49, "RD": 51, "RC": 51, "RB": 53,
+}
+
+
+def normalize(note):
+    """Map a GM drum note onto the TD-07 map. Returns (note, known)."""
+    note = GM_TO_TD07.get(note, note)
+    return note, note in DRUMS
 
 
 def write_midi(events, path):
