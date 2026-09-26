@@ -1,0 +1,30 @@
+# Copyrighted transcriptions: personal use only, never commit
+songs/
+
+# Kit recordings and run outputs
+takes/
+runs/
+*.parquet
+
+# Connectome downloads (large, fetched by script)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Node (viewer)
+node_modules/
+dist/
+
+# Secrets (neuPrint token etc.)
+.env
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

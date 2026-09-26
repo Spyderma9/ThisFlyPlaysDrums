@@ -1,0 +1,22 @@
+# Server environment. Conda builds avoid "Illegal instruction" crashes on the Xeons (no AVX2).
+# fly-brain itself is installed from its repo; follow its README for the GeNN backend.
+name: flydrums
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - pyarrow
+  - scikit-learn
+  - pytorch
+  - pytorch-cuda=12.1
+  - mujoco
+  - pyzmq
+  - mido
+  - pip
+  - pip:
+      - neuprint-python
+      - snntorch
