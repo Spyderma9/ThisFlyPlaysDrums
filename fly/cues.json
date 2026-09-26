@@ -1,0 +1,563 @@
+{
+ "about": "D2 cue groups: one MaleCNS v1.0 Johnston's organ subtype per drum, picked by `python -m fly.probe --fine-jo --drop-kc-in --no-graph --tag fine_nokcin` (stock weights, every edge onto Kenyon cells removed, 200 Hz x 50 ms, 20 trials). legs = measured latency/peak per leg for that group. Hand edit (user-approved Sat 26 Sept): kick and tom3 swapped from the greedy pick (kick JO-A1_L, 4 neurons, 11.7 Hz) so kick gets the strong JO-EV1_L and tom3 takes JO-EV6_R.",
+ "probe": {
+  "connectome": "malecns-v1.0",
+  "rate_hz": 200.0,
+  "stim_ms": 50,
+  "pre_ms": 50,
+  "post_ms": 250,
+  "trials": 20,
+  "bin_ms": 5,
+  "strong_synapses": 5,
+  "weight_scale": 1.0,
+  "drop_kc_kc": false,
+  "drop_kc_in": true,
+  "note": "all candidate neurons get fly-brain's no-refractory treatment for stimulated cells"
+ },
+ "max_latency_ms": 60,
+ "drums": {
+  "kick": {
+   "group": "JO-EV1_L",
+   "limbs": [
+    "hind_right"
+   ],
+   "score_hz": 24.17,
+   "bodyIds": [
+    33970,
+    34388,
+    55759,
+    74384,
+    77969,
+    79237,
+    80492,
+    81376,
+    87594,
+    89103,
+    98638,
+    111529,
+    117698,
+    119378,
+    123879,
+    126081,
+    156929,
+    162684,
+    169407,
+    219501,
+    260581,
+    265416,
+    276829,
+    301867,
+    324669,
+    325276,
+    426515,
+    495313,
+    531021,
+    918248,
+    467266335
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 30,
+     "peak_hz": 10.0
+    },
+    "front_right": {
+     "latency_ms": 40,
+     "peak_hz": 8.25
+    },
+    "hind_left": {
+     "latency_ms": 25,
+     "peak_hz": 19.35
+    },
+    "hind_right": {
+     "latency_ms": 30,
+     "peak_hz": 24.17
+    }
+   }
+  },
+  "hat_pedal": {
+   "group": "JO-EV1_R",
+   "limbs": [
+    "hind_left"
+   ],
+   "score_hz": 16.13,
+   "bodyIds": [
+    126689,
+    259400,
+    321272,
+    377495,
+    417419,
+    430178,
+    483594,
+    512226,
+    530461,
+    536218,
+    561160,
+    142847993,
+    206174566,
+    222873418,
+    480555286,
+    493774068,
+    545702226,
+    849226085,
+    850213452
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 50,
+     "peak_hz": 2.2
+    },
+    "front_right": {
+     "latency_ms": 60,
+     "peak_hz": 1.25
+    },
+    "hind_left": {
+     "latency_ms": 30,
+     "peak_hz": 16.13
+    },
+    "hind_right": {
+     "latency_ms": 30,
+     "peak_hz": 20.33
+    }
+   }
+  },
+  "snare": {
+   "group": "JO-FV_L",
+   "limbs": [
+    "front_left"
+   ],
+   "score_hz": 7.8,
+   "bodyIds": [
+    127912,
+    146314,
+    154152,
+    162166,
+    170014,
+    179637,
+    224261,
+    227655,
+    237833,
+    240644,
+    246484,
+    247028,
+    249842,
+    279391,
+    287167,
+    303968,
+    308970,
+    324453,
+    331081,
+    336332,
+    343346,
+    360461,
+    403040,
+    407092,
+    426803,
+    482280,
+    166331476,
+    197061019,
+    209837831,
+    238817349,
+    639242246,
+    793720445,
+    812830130,
+    906350022,
+    975904445,
+    987117568
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 20,
+     "peak_hz": 7.8
+    },
+    "front_right": {
+     "latency_ms": 40,
+     "peak_hz": 5.75
+    },
+    "hind_left": {
+     "latency_ms": 65,
+     "peak_hz": 5.97
+    },
+    "hind_right": {
+     "latency_ms": 20,
+     "peak_hz": 6.5
+    }
+   }
+  },
+  "xstick": {
+   "group": "JO-EV5_L",
+   "limbs": [
+    "front_left"
+   ],
+   "score_hz": 7.32,
+   "bodyIds": [
+    86281,
+    96418,
+    101279,
+    101548,
+    101797,
+    107672,
+    126511,
+    217036,
+    345335,
+    513223,
+    529105,
+    930621,
+    1004833528
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 40,
+     "peak_hz": 7.32
+    },
+    "front_right": {
+     "latency_ms": 50,
+     "peak_hz": 6.5
+    },
+    "hind_left": {
+     "latency_ms": 25,
+     "peak_hz": 7.58
+    },
+    "hind_right": {
+     "latency_ms": 25,
+     "peak_hz": 6.33
+    }
+   }
+  },
+  "hat_closed": {
+   "group": "JO-ED2_a_L",
+   "limbs": [
+    "front_right"
+   ],
+   "score_hz": 8.0,
+   "bodyIds": [
+    49513,
+    85904,
+    100487,
+    115392,
+    118191,
+    133748,
+    148451,
+    181666,
+    190501,
+    207190,
+    215110,
+    241662,
+    252053,
+    277760,
+    522304,
+    530572,
+    534097,
+    900950,
+    919830,
+    286384065,
+    572394633,
+    758504623,
+    767138051
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 35,
+     "peak_hz": 14.15
+    },
+    "front_right": {
+     "latency_ms": 45,
+     "peak_hz": 8.0
+    },
+    "hind_left": {
+     "latency_ms": 35,
+     "peak_hz": 8.06
+    },
+    "hind_right": {
+     "latency_ms": 30,
+     "peak_hz": 7.0
+    }
+   }
+  },
+  "hat_open": {
+   "group": "JO-EV3_L",
+   "limbs": [
+    "front_right",
+    "hind_left"
+   ],
+   "score_hz": 8.55,
+   "bodyIds": [
+    38727,
+    60534,
+    62868,
+    73005,
+    75970,
+    77273,
+    79513,
+    86133,
+    92035,
+    95144,
+    98583,
+    113345,
+    128729,
+    176004,
+    208968,
+    491302,
+    529072,
+    529073,
+    531712,
+    532627,
+    557828,
+    859985596
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 30,
+     "peak_hz": 9.27
+    },
+    "front_right": {
+     "latency_ms": 50,
+     "peak_hz": 9.0
+    },
+    "hind_left": {
+     "latency_ms": 35,
+     "peak_hz": 8.55
+    },
+    "hind_right": {
+     "latency_ms": 30,
+     "peak_hz": 8.17
+    }
+   }
+  },
+  "tom1": {
+   "group": "JO-ED2_b_R",
+   "limbs": [
+    "front_right",
+    "front_left"
+   ],
+   "score_hz": 8.5,
+   "bodyIds": [
+    174217,
+    512630,
+    514083,
+    514084,
+    516606,
+    530462,
+    530838,
+    562509,
+    921745,
+    929247
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 40,
+     "peak_hz": 14.39
+    },
+    "front_right": {
+     "latency_ms": 30,
+     "peak_hz": 8.5
+    },
+    "hind_left": {
+     "latency_ms": 25,
+     "peak_hz": 6.77
+    },
+    "hind_right": {
+     "latency_ms": 50,
+     "peak_hz": 6.33
+    }
+   }
+  },
+  "tom2": {
+   "group": "JO-EV6_L",
+   "limbs": [
+    "front_right",
+    "front_left"
+   ],
+   "score_hz": 8.5,
+   "bodyIds": [
+    32912,
+    66302,
+    67186,
+    94723,
+    119531,
+    126654,
+    142804,
+    145198,
+    218203,
+    275117,
+    534098,
+    900949,
+    263851661,
+    341173407
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 30,
+     "peak_hz": 10.98
+    },
+    "front_right": {
+     "latency_ms": 40,
+     "peak_hz": 8.5
+    },
+    "hind_left": {
+     "latency_ms": 30,
+     "peak_hz": 7.9
+    },
+    "hind_right": {
+     "latency_ms": 30,
+     "peak_hz": 7.67
+    }
+   }
+  },
+  "tom3": {
+   "group": "JO-EV6_R",
+   "limbs": [
+    "front_right",
+    "front_left"
+   ],
+   "score_hz": 5.0,
+   "bodyIds": [
+    211443,
+    242202,
+    520630,
+    901811,
+    189216879,
+    399935690,
+    975394666
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 60,
+     "peak_hz": 6.34
+    },
+    "front_right": {
+     "latency_ms": 50,
+     "peak_hz": 5.0
+    },
+    "hind_left": {
+     "latency_ms": 85,
+     "peak_hz": 5.48
+    },
+    "hind_right": {
+     "latency_ms": 65,
+     "peak_hz": 5.83
+    }
+   }
+  },
+  "crash": {
+   "group": "JO-CM_L",
+   "limbs": [
+    "front_right"
+   ],
+   "score_hz": 7.5,
+   "bodyIds": [
+    68291,
+    69797,
+    84184,
+    108298,
+    109189,
+    142818,
+    192450,
+    223861,
+    263492,
+    520659,
+    520660,
+    533996,
+    552568,
+    118359732,
+    211937357,
+    435223099
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 20,
+     "peak_hz": 11.22
+    },
+    "front_right": {
+     "latency_ms": 40,
+     "peak_hz": 7.5
+    },
+    "hind_left": {
+     "latency_ms": 50,
+     "peak_hz": 5.32
+    },
+    "hind_right": {
+     "latency_ms": 30,
+     "peak_hz": 5.33
+    }
+   }
+  },
+  "ride": {
+   "group": "JO-ED2_b_L",
+   "limbs": [
+    "front_right"
+   ],
+   "score_hz": 7.25,
+   "bodyIds": [
+    64293,
+    68750,
+    82928,
+    98485,
+    104113,
+    243520,
+    256622,
+    515512,
+    515513,
+    515514,
+    929401
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 35,
+     "peak_hz": 10.0
+    },
+    "front_right": {
+     "latency_ms": 45,
+     "peak_hz": 7.25
+    },
+    "hind_left": {
+     "latency_ms": 65,
+     "peak_hz": 9.35
+    },
+    "hind_right": {
+     "latency_ms": 65,
+     "peak_hz": 8.5
+    }
+   }
+  },
+  "ride_bell": {
+   "group": "JO-ED1_L",
+   "limbs": [
+    "front_right"
+   ],
+   "score_hz": 6.5,
+   "bodyIds": [
+    83648,
+    90773,
+    101240,
+    112427,
+    112824,
+    241065,
+    325429,
+    330394,
+    382609,
+    524140,
+    531019,
+    533713,
+    713207029
+   ],
+   "legs": {
+    "front_left": {
+     "latency_ms": 45,
+     "peak_hz": 12.93
+    },
+    "front_right": {
+     "latency_ms": 55,
+     "peak_hz": 6.5
+    },
+    "hind_left": {
+     "latency_ms": 65,
+     "peak_hz": 6.61
+    },
+    "hind_right": {
+     "latency_ms": 65,
+     "peak_hz": 5.5
+    }
+   }
+  }
+ }
+}

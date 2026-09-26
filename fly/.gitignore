@@ -1,0 +1,7 @@
+# fly-brain and other upstream repos, cloned on the server (GPL, not vendored in git)
+vendor/
+
+# Model checkpoints and cached tensors
+*.pt
+*.pth
+*.npz
