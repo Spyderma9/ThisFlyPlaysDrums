@@ -51,7 +51,9 @@ You're continuing work on the fly side of Fly Drums. The previous session's cont
 
 **Partner facts:**
 - Sam's `human/prep_takes.py` writes cleaned takes to `grooves/train/` (resolves open question 1).
-- About 5 minutes of takes are said to be ready but **not pushed yet** (`origin/midi` at `db0c48e`).
+- **Pushed (Sat 04:30):** 21 cleaned takes in `grooves/train/` plus `index.csv` (`2489756`), and **`human/score.py`** (`2d48e6c`). `origin/midi` is at `2d48e6c`.
+- **`score.py`** reads played hits from `hits.csv` (`t_ms, note, velocity`) or `.mid`, and pairs them with the reference within 60 ms by default. So **`hits.csv` and `hits.mid` must be in score time**: subtract the encoder's `offset_ms` from sim time. The training takes also start with 1 s of silence.
+- The partner is Sam (she/her, per the user).
 - Sam's note on `fly/environment.yml` being on `midi` doesn't matter: it's only in the shared base commit, so no conflict.
 
 ### Phase 0: done (Sat ~05:20 EDT). Stopped before Phase 1; waiting for the user's go-ahead.
@@ -95,6 +97,74 @@ You're continuing work on the fly side of Fly Drums. The previous session's cont
   - JO subtypes: 672 neurons, types JO-A/B/CA/CL/CM/DA/DP/ED/EV/FD/FV/mz.
   - 1,314 DNs, 4,064 KCs, 97 MBONs.
 - Results are in `runs/bench/*.json` on the server.
+
+### Phase 1: probe run. Stopped at the D2/D3/D5 gate (plus a new gain decision), waiting for the user.
+
+**Code:**
+- `fly/probe.py`: graph pass + GPU simulation pass + charts.
+  - Flags: `--connectome flywire`, `--only`, `--no-graph`, `--weight-scale`, `--drop-kc-kc`, `--drop-kc-in`, `--tag`.
+  - Candidates: JO families A–F × side, plus leg proprioceptors (chordo/campani/hairplate × leg pair × side), min 3 neurons.
+  - Readouts: leg MNs, ProLN/MetaLN × side. Side is `somaSide`, falling back to `rootSide` (JO neurons only have `rootSide`).
+- `fly/tests/test_probe.py`: 2 tests, 9/9 total pass.
+- `connectome.py`: keeps `rootSide`. `load_flywire(annotate=True)` downloads the Schlegel et al. FlyWire annotations into `data/flywire/`.
+- The user skipped the FlyWire fallback probe. They were given instructions to pass on: free the GPU, run `/mnt/user/dev/fx "python -m fly.probe --connectome flywire"`, readouts are DN_L/DN_R.
+
+**Bug found and fixed:** pandas `groupby(...).groups` returned NaN-key groups ("JO-nan_L" = ~80k neurons), which contaminated the first run.
+
+**Findings** (`runs/probe/malecns*/report.json` on the server, 200 Hz cue × 50 ms, 20 trials):
+- No spontaneous activity (baseline 0 Hz).
+- **Runaway in the mushroom body at the stock gain:** after the cue, KCs sit at ~80–120 Hz and MBONs at ~130–190 Hz until the window ends.
+  - Cause: MaleCNS gives ~1.9× the input synapses per neuron of FlyWire (745 vs 393). FlyWire in fly-brain also includes 1–4-synapse edges, so it isn't a threshold difference.
+  - Dropping KC→KC edges (1.15M synapses) only halves the runaway.
+  - Weight scale 0.53 removes it but weakens the legs (JO-C_L reaches nothing).
+  - KC activation is bistable: at 0.6–0.8 it's either off or runaway.
+  - **Cutting every edge onto KCs (`--drop-kc-in`)** removes it at any gain and keeps full leg drive.
+- **Motor path:** JO → descending neurons → leg MNs, **2 hops**. Top relays are DNp10, DNb05, DNg15, pIP1, DNp18, DNg50, DNg35. The MB isn't on it (via KC→MBON is 5–6 hops).
+- **Right-side JO-A/B are poorly connected in v1.0:** 880 vs 16,869 output synapses for JO-A R vs L, so JO-A_R and JO-B_R drive nothing. Use left JO-A/B, or other families.
+- **Stock gain + `--drop-kc-in`:**
+
+  | Cue | Latency (front L / front R / hind L / hind R) | Peak |
+  |---|---|---|
+  | JO-E_L | 20 / 30 / 20 / 25 ms | 5–15 Hz per MN |
+  | JO-E_R, JO-C_L, JO-F_L | 20–55 ms | similar |
+
+  Lingering MN activity is 1–3 Hz in the last 100 ms.
+- **Responding MNs** are mostly extensor-type (Fe reductor, Ti extensor, Ta levator; hind: sternal rotators, Tr flexor, MNhl59).
+  - Leg MNs: 96 flexor-type, 30 extensor-type, 77 other.
+- **D3 edge counts:** JO→DN 7,469 edges (45,631 synapses). All→DN 566,762. DN→leg MN 3,006 (917 onto flexor-type). 396 DNs get JO input, and 59 of those also reach flexor-type MNs.
+
+**Decided by the user (Sat ~07:00, "all recommended"):**
+- **Gain / runaway fix:** stock fly-brain weights (wScale 0.275, no rescale) + **every edge onto Kenyon cells removed** (the probe's `--drop-kc-in`). The shuffled control gets the same cut.
+- **D2:** 12 cue groups = JO fine subtypes × side. `python -m fly.probe --fine-jo --drop-kc-in --no-graph --tag fine_nokcin` picks one per drum into `runs/probe/malecns_fine_nokcin/cues.json`.
+  - Score = the weakest peak over the drum's legs, counting only legs reached ≤ 60 ms.
+  - Picked greedily, most constrained drum first.
+- **D3:** trainable = synapses from the 12 cue groups onto descending neurons.
+- **D5:** annotation-based MN type → flybody joint. Decoder = rest + gain·(flexor-type − extensor-type) per joint.
+- **Encoder lookahead** = MN latency (~20–45 ms) + stroke lead from Phase 3.
+
+**Code for the decisions:**
+- `fly/drums.py` is rewritten for **12 drums**: kick, hat_pedal, snare, xstick, hat_closed, hat_open, tom1–3, crash, ride, ride_bell.
+  - `limbs` lists the legs that move to play each drum, sounding leg first. hat_open = front_right + hind_left; toms = both front legs.
+  - Edge and rim folding follows Sam's `SAME_DRUM`.
+- Encoder tests are updated for it: 10/10 pass.
+
+**Phase 1 done (Sat ~07:40).** The D2 picks are saved in **`fly/cues.json`** (tracked): 12 groups, 212 neurons, each with bodyIds and its per-leg latency/peak. Local copy of the run: `runs/probe/malecns_fine_nokcin/`.
+
+| Drum | Group (n) | Drum | Group (n) |
+|---|---|---|---|
+| kick | JO-A1_L (4) | tom1 | JO-ED2_b_R (10) |
+| hat_pedal | JO-EV1_R (19) | tom2 | JO-EV6_L (14) |
+| snare | JO-FV_L (36) | tom3 | JO-EV1_L (31) |
+| xstick | JO-EV5_L (13) | crash | JO-CM_L (16) |
+| hat_closed | JO-ED2_a_L (23) | ride | JO-ED2_b_L (11) |
+| hat_open | JO-EV3_L (22) | ride_bell | JO-ED1_L (13) |
+
+**Caveats:**
+- Every group drives all 4 legs at 20–65 ms and 5–24 Hz. **Leg selectivity has to be learned** (D3, JO→DN).
+- Kick got a 4-neuron group because greedy toms took JO-EV1_L, the best hind driver. The swap option offered to the user: kick = JO-EV1_L, tom3 = JO-EV6_R (weaker front drive, 5 Hz).
+- In the fine run, all right-side JO-A/B/ED1/ED2_c/DP types are silent (sparse v1.0 reconstruction).
+
+**Next: Phase 2.** Encoder with 12 cue groups from `cues.json` → Brain with the KC-input cut and plastic JO→DN edges → `decoder.py` (D5 map) → `body.py` (flybody fixed at the thorax, sticks, 10 pads + 2 pedals, contacts) → `loop.py` writing `hits.mid`/`.csv`/`.json` in score time.
 
 ## State in one paragraph
 

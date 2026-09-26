@@ -34,9 +34,15 @@ NEUROTRANSMITTERS = "body-neurotransmitters-male-cns-v1.0.feather"  # 43 MB
 WEIGHTS = "connectome-weights-male-cns-v1.0-minconf-0.5.feather"  # 1.05 GB: body_pre, body_post, weight
 INHIBITORY_NT = {"gaba", "glutamate", "histamine"}
 NEURON_COLUMNS = [
-    "bodyId", "type", "instance", "superclass", "class", "subclass", "somaSide", "somaNeuromere",
+    "bodyId", "type", "instance", "superclass", "class", "subclass", "somaSide", "rootSide", "somaNeuromere",
     "entryNerve", "exitNerve", "receptorType", "flywireType", "mancType", "status",
 ]
+# FlyWire v783 cell types (Schlegel et al. 2024), which fly-brain's files don't carry. Used by the fallback probe.
+FLYWIRE_DIR = DATA / "flywire"
+FLYWIRE_ANNOTATIONS_URL = (
+    "https://raw.githubusercontent.com/flyconnectome/flywire_annotations/main/"
+    "supplemental_files/Supplemental_file1_neuron_annotations.tsv"
+)
 
 
 @dataclass
@@ -131,11 +137,27 @@ def load_malecns(root: Path = MALECNS_DIR) -> Connectome:
     return Connectome("malecns-v1.0", neurons, pre.astype(np.int64), post.astype(np.int64), weight)
 
 
-def load_flywire() -> Connectome:
+def _flywire_annotations(neurons: pd.DataFrame) -> pd.DataFrame:
+    """Add type/superclass/class/subclass/somaSide columns (MaleCNS names) from the FlyWire annotation table."""
+    path = FLYWIRE_DIR / "neuron_annotations.tsv"
+    FLYWIRE_DIR.mkdir(parents=True, exist_ok=True)
+    _download(FLYWIRE_ANNOTATIONS_URL, path)
+    cols = {"root_id": "bodyId", "super_class": "superclass", "cell_class": "class",
+            "cell_sub_class": "subclass", "cell_type": "type", "side": "somaSide"}
+    ann = pd.read_csv(path, sep="\t", usecols=list(cols), low_memory=False).rename(columns=cols)
+    ann["somaSide"] = ann["somaSide"].map({"left": "L", "right": "R"})
+    out = neurons.merge(ann.drop_duplicates("bodyId"), on="bodyId", how="left")
+    print(f"FlyWire annotations matched {out['superclass'].notna().sum():,} of {len(out):,} neurons")
+    return out
+
+
+def load_flywire(annotate: bool = False) -> Connectome:
     """FlyWire v783 as shipped with fly-brain (already signed). Brain only: no leg motor neurons."""
     names = pd.read_csv(FLYBRAIN_DATA / "2025_Completeness_783.csv")
     conn = pd.read_parquet(FLYBRAIN_DATA / "2025_Connectivity_783.parquet")
     neurons = pd.DataFrame({"bodyId": names.iloc[:, 0].to_numpy()})
+    if annotate:
+        neurons = _flywire_annotations(neurons)
     return Connectome(
         "flywire-v783",
         neurons,

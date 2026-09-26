@@ -35,7 +35,7 @@ def test_burst_starts_lookahead_before_note(tmp_path):
 
 def test_velocity_scales_rate_and_unmapped_notes_are_dropped(tmp_path):
     path = tmp_path / "g.mid"
-    _write(path, [(0, 36, 127), (1, 36, 1), (1.5, 49, 127)])  # 49 = crash, not in the fly's kit
+    _write(path, [(0, 36, 127), (1, 36, 1), (1.5, 60, 127)])  # 60 isn't a TD-07 drum
     enc = encode(path, rate_min_hz=50, rate_max_hz=200)
     kick = enc.rates[:, VOICE_NAMES.index("kick")]
     assert kick.max() == 200
@@ -43,8 +43,10 @@ def test_velocity_scales_rate_and_unmapped_notes_are_dropped(tmp_path):
     assert enc.rates.sum() == kick.sum()
 
 
-def test_hat_variants_fold_onto_hihat(tmp_path):
+def test_edges_fold_onto_their_drum(tmp_path):
     path = tmp_path / "g.mid"
-    _write(path, [(0, 46, 100), (1, 22, 100)])
+    _write(path, [(0, 22, 100), (1, 26, 100), (2, 50, 100)])  # closed-hat edge, open-hat edge, tom 1 rim
     enc = encode(path)
-    assert enc.rates[:, VOICE_NAMES.index("hihat")].any()
+    for name in ("hat_closed", "hat_open", "tom1"):
+        assert enc.rates[:, VOICE_NAMES.index(name)].any()
+    assert len(VOICE_NAMES) == 12
