@@ -7,8 +7,11 @@ A hit only counts on contact between a pad and the fly (a stick or a playing leg
   and middle legs included, holds flybody's springref (its folded flight posture).
 - Sticks: a capsule gripped at the end of each front leg's first tarsal segment, mounted so that in READY it points
   along STICK_DIR (forward, a little down and in). The tarsal segments past the grip lose their collisions.
-- Kit (fly/kit.json, from --build-kit): 9 stick pads (the hat pad sounds 42 or 46) and 2 pedals
-  (hind right = kick, hind left = hi-hat). Only playing-leg and stick geoms collide with the kit.
+- Kit (fly/kit.json, from --build-kit): the TD-07's 7 stick pads and 2 pedals (hind right = kick, hind left = hi-hat).
+  Only playing-leg and stick geoms collide with the kit. Some notes are zones of a pad, as on the TD-07: a strike near
+  the snare's near rim sounds the cross-stick (37), one near the ride's centre the bell (53); the hat pad sounds 42 or 46.
+  Each pad is placed where both sticks can reach it (no drum is left- or right-handed), falling back to one stick
+  only if no such spot exists. kit["pads"][i]["targets"] are the strike points fly.strokes aims at, one per voice.
 - Control: Body.step(targets[32]) sets the 32 leg servos (drums.LEGS x decoder.JOINTS) and runs 1 ms of physics.
   Every other actuator holds flybody's rest pose (joint springref).
 - Hits: a pad's first contact after DEBOUNCE_MS untouched records a hit, then the pad is refractory for REFRACTORY_MS. The hat pad
@@ -43,6 +46,7 @@ STICK_LENGTH, STICK_RADIUS, STICK_MASS = 0.1, 0.003, 5e-7  # cm, cm, g (the fly 
 STICK_DIR = {"front_left": (1.0, -0.3, -0.35), "front_right": (1.0, 0.3, -0.35)}  # world direction in READY
 READY = {"front": {"femur": 0.5}, "hind": {}}  # playing-leg joint angles at rest (rad); unlisted joints are 0
 PAD_HALF = (0.015, 0.015, 0.002)
+ZONED_HALF = (0.022, 0.022, 0.002)  # pads with a second zone are bigger, so both zones get room
 PEDAL_HALF = (0.02, 0.02, 0.002)
 PAD_GAP = 0.015  # cm between pad edges
 DROP_MIN, DROP_MAX = 0.015, 0.045  # cm a pad sits below the rest tip of the stick (or foot) that plays it
@@ -52,11 +56,16 @@ REFRACTORY_MS = 30.0
 DEBOUNCE_MS = 10.0  # a pad must have been untouched this long for a new contact to count (no chatter re-triggers)
 PEDAL_CHICK_CM_S = 0.8  # a hat-pedal press this fast or faster sends 44; a slower one just closes the hat
 VEL_PER_CM_S = 45.0  # MIDI velocity per cm/s of normal contact speed: the teacher strokes span ~0.5-2.8 cm/s
-# stick pads in placement order (most played first), with the legs that play each; then pedals
-STICK_PADS = {"snare": ("front_left",), "hat": ("front_right",), "crash": STICK_LEGS, "tom1": STICK_LEGS,
-              "tom2": STICK_LEGS, "tom3": STICK_LEGS, "ride": ("front_right",), "ride_bell": ("front_right",),
-              "xstick": ("front_left",)}  # crash: either stick, so it can sound with the hat or ride
+# stick pads in placement order (most played first), each with the stick it falls back to if no spot suits both
+STICK_PADS = {"snare": "front_left", "hat": "front_right", "crash": "front_right", "tom1": "front_right",
+              "tom2": "front_left", "tom3": "front_right", "ride": "front_right"}
+CENTRE_PADS = ("crash", "tom1", "tom2", "tom3")  # packed between the sticks; the others on their stick's side
 PEDALS = {"kick": "hind_right", "hat_pedal": "hind_left"}
+# zones: pad -> (zone voice, centre offset, radius), as fractions of the pad's half-width. The offset points from the
+# pad's centre toward the rest tips of the sticks that play it (the near side). A contact within the radius of the
+# zone's centre sounds the zone's voice, anywhere else the pad's. MAIN_SPOT: where strokes aim for the pad's own voice.
+ZONES = {"snare": ("xstick", 0.75, 0.35), "ride": ("ride_bell", 0.0, 0.35)}
+MAIN_SPOT = {"ride": 0.7}  # the ride's bow, clear of the bell; other pads' own voice is struck at the centre
 VOICE = {v.name: v for v in VOICES}
 # anatomical "+" of each joint (decoder.MN_JOINT's direction) as a geometric test on the leg tip
 ANATOMY = {"coxa_abduct": "adduct", "coxa_twist": "forward", "coxa": "forward", "femur_twist": "backward",
@@ -75,8 +84,19 @@ class Hit:
     limb: str
 
 
-def pad_voice(pad: str, hat_closed: bool) -> str:
-    return ("hat_closed" if hat_closed else "hat_open") if pad == "hat" else pad
+def pad_voice(pad: str, hat_closed: bool, zone: str | None = None) -> str:
+    """The voice a contact sounds: the hat follows the pedal; a contact inside a pad's zone sounds the zone."""
+    if pad == "hat":
+        return "hat_closed" if hat_closed else "hat_open"
+    return zone or pad
+
+
+def zone_at(zones: list[dict], xy: np.ndarray) -> str | None:
+    """The zone voice whose disc (kit pad["zones"]: centre xy, radius, cm) contains the contact point xy, if any."""
+    for z in zones:
+        if np.linalg.norm(xy - np.asarray(z["center"])) <= z["radius"]:
+            return z["voice"]
+    return None
 
 
 # ---------- model ----------
@@ -218,6 +238,7 @@ class Body:
         self.act = np.array([self.m.actuator(n).id for n in ACTUATORS])
         self.lo, self.hi = self.m.actuator_ctrlrange[self.act].T
         self.pads = [p["name"] for p in self.kit["pads"]]
+        self.zones = [p.get("zones", []) for p in self.kit["pads"]]
         self.pad_of = np.full(self.m.ngeom, -1)
         for i, p in enumerate(self.pads):
             self.pad_of[self.m.geom(f"pad_{p}").id] = i
@@ -264,6 +285,7 @@ class Body:
         now = np.zeros(len(self.pads), dtype=bool)
         speed = np.zeros(len(self.pads))
         limb = np.full(len(self.pads), -1)
+        where = np.zeros((len(self.pads), 2))  # xy of the fastest new contact on each pad (for zones)
         n = self.d.ncon
         if n:
             geoms = self.d.contact.geom[:n]
@@ -275,6 +297,7 @@ class Body:
                     s = self._speed(i, g, qvel)
                     if s >= speed[p]:
                         speed[p], limb[p] = s, player[i, 1 - side]
+                        where[p] = self.d.contact[i].pos[:2]
                 now[p] = True
         hits = []
         for p in np.flatnonzero(now & ~self.touching):
@@ -282,7 +305,7 @@ class Body:
                 continue  # a gentle close is silent, like the TD-07's pedal
             if t_ms - self.last_hit[p] >= REFRACTORY_MS and t_ms - self.last_touch[p] >= DEBOUNCE_MS:
                 self.last_hit[p] = t_ms
-                voice = VOICE[pad_voice(self.pads[p], now[self.hat_pedal])]
+                voice = VOICE[pad_voice(self.pads[p], now[self.hat_pedal], zone_at(self.zones[p], where[p]))]
                 hits.append(Hit(t_ms, self.pads[p], voice.name, voice.out_note,
                                 int(np.clip(round(VEL_PER_CM_S * speed[p]), 1, 127)), float(speed[p]), LEGS[limb[p]]))
         self.last_touch[self.touching] = t_ms - self.dt_ms  # the last substep each released pad was still touched
@@ -366,9 +389,29 @@ def _clearance(m, d, p: np.ndarray) -> float:
     return best
 
 
+def pad_targets(name: str, pos: np.ndarray, half, home: np.ndarray) -> dict:
+    """Strike points on a pad's top face, one per voice it sounds (the hat pad has one, "hat"), and its zones.
+    Zones and MAIN_SPOT are placed along the line from the pad's centre toward `home` (the players' rest tips)."""
+    top = np.asarray(pos, dtype=float) + np.array([0.0, 0.0, half[2]])
+    toward = (np.asarray(home) - top)[:2]
+    toward = toward / max(float(np.linalg.norm(toward)), 1e-9)
+
+    def at(frac):
+        return top + np.append(toward * frac * half[0], 0.0)
+
+    targets, zones = {name: at(MAIN_SPOT.get(name, 0.0))}, []
+    if name in ZONES:
+        voice, offset, radius = ZONES[name]
+        targets[voice] = at(offset)
+        zones.append({"voice": voice, "center": [round(float(x), 5) for x in at(offset)[:2]],
+                      "radius": round(radius * half[0], 5)})
+    return {"targets": {v: [round(float(x), 5) for x in p] for v, p in targets.items()}, "zones": zones}
+
+
 def place_kit(m, signs: dict, allowed: dict, n: int = 6000, seed: int = 0) -> list[dict]:
     """Drums face up under the READY stick tips, between DROP_MIN and DROP_MAX below them, each at a point the
-    decoder can reach, packed around the playing stick's rest tip (toms around both). Pedals go under the hind feet.
+    decoder can reach, packed around the rest tips of the sticks that play it. Every stick pad is placed for both
+    sticks if any spot allows it, else for its fallback stick. Pedals go under the hind feet.
     A stick striking one pad must keep its shaft clear of every other pad."""
     from scipy.spatial import cKDTree
 
@@ -391,8 +434,8 @@ def place_kit(m, signs: dict, allowed: dict, n: int = 6000, seed: int = 0) -> li
                 and all(np.linalg.norm(np.array(q["pos"]) - p) >= r + radius(q["half"]) + PAD_GAP for q in pads)
                 and all(_seg_dist(p, a, b) >= r + STICK_RADIUS + CLEARANCE for a, b in shafts))
 
-    def add(name, kind, legs, pts, half):
-        home = np.mean([rest_tip[leg] for leg in legs], axis=0)
+    def add(name, kind, legs, pts, half, home_legs=None):
+        home = np.mean([rest_tip[leg] for leg in (home_legs or legs)], axis=0)
         for k in np.argsort(np.linalg.norm((pts - home)[:, :2], axis=1)):  # nearest to straight below home
             if not free(pts[k], half):
                 continue
@@ -407,17 +450,26 @@ def place_kit(m, signs: dict, allowed: dict, n: int = 6000, seed: int = 0) -> li
                 continue
             shafts.extend(mine)
             pads.append({"name": name, "kind": kind, "legs": list(legs), "pos": [round(float(x), 5) for x in pts[k]],
-                         "normal": up, "half": list(half), "reach": reach})
+                         "normal": up, "half": list(half), "reach": reach, **pad_targets(name, pts[k], half, home)})
             return
         raise RuntimeError(f"no free reachable spot for {name}")
 
-    for name, legs in STICK_PADS.items():
+    def stick_pad(name, legs, half, home_legs):
         pts = ws[legs[0]][1]
         z0 = min(rest_tip[leg][2] for leg in legs)
         keep = (pts[:, 2] < z0 - DROP_MIN) & (pts[:, 2] > z0 - DROP_MAX)
         if len(legs) > 1:  # both sticks must reach it
             keep &= cKDTree(ws[legs[1]][1]).query(pts)[0] < 0.004
-        add(name, "stick", legs, pts[keep], PAD_HALF)
+        add(name, "stick", legs, pts[keep], half, home_legs)
+
+    for name, fallback in STICK_PADS.items():
+        half = ZONED_HALF if name in ZONES else PAD_HALF
+        home = STICK_LEGS if name in CENTRE_PADS else (fallback,)  # the hat stays on the right, the snare left, ...
+        try:
+            stick_pad(name, STICK_LEGS, half, home)
+        except RuntimeError:
+            stick_pad(name, (fallback,), half, home)
+            print(f"  {name}: no spot both sticks reach; {fallback} only", flush=True)
     for name, leg in PEDALS.items():
         pts = ws[leg][1]
         add(name, "pedal", (leg,), pts[pts[:, 2] < rest_tip[leg][2] - DROP_MIN], PEDAL_HALF)

@@ -1,13 +1,15 @@
-"""Package recorded takes as clean training material for the fly.
+"""Package recorded takes as clean material for the fly: training takes, or held-out test grooves.
 
 Each take is cleaned (crosstalk, kick bounces and stray touches dropped; edges and rims folded onto
-their drum), trimmed to start LEAD_MS before the first hit, and saved to grooves/train/ as a channel-10
-.mid with TD-07 note numbers. grooves/train/index.csv lists every file with its tempo, length and drums.
+their drum), trimmed to start LEAD_MS before the first hit, and saved to grooves/train/ (or --dir) as a
+channel-10 .mid with TD-07 note numbers. <dir>/index.csv lists every file with its tempo, length and drums.
+A take already used in another groove folder is refused, so held-out grooves can't leak into training.
 
 Usage:
     python human/prep_takes.py takes/take_20260926_031545.csv --name feet_kick_pedal
     python human/prep_takes.py takes/*.csv                    # names made from the drums and tempo
     python human/prep_takes.py takes/take_20260926_031545.csv --note "feet only, no click"
+    python human/prep_takes.py takes/take_20260926_115406.csv --dir grooves/heldout --name heldout_1
 """
 import argparse
 import csv
@@ -21,8 +23,8 @@ import mido
 from drum_map import DRUM_CHANNEL, DRUMS, GRID_NAMES, SAME_DRUM, HitFilter, write_midi
 from sheet_to_midi import NOTE_MS, read_midi
 
-OUT_DIR = Path("grooves/train")
-INDEX = OUT_DIR / "index.csv"
+GROOVES = Path("grooves")
+OUT_DIR = GROOVES / "train"
 INDEX_FIELDS = ["file", "source", "bpm", "seconds", "hits", "drums", "note"]
 LEAD_MS = 1000  # silence before the first hit, so the encoder has room to cue it early
 
@@ -59,7 +61,7 @@ def estimate_bpm(times):
     return min((b / 2 for b in range(160, 361)), key=misfit)
 
 
-def prep(path, name, note):
+def prep(path, name, note, out_dir):
     hits, dropped = load_hits(path)
     if not hits:
         print(f"{path}: no drum hits, skipped")
@@ -77,7 +79,7 @@ def prep(path, name, note):
     if not name:
         stamp = path.stem.replace("take_", "")
         name = f"{drums}_{bpm:.0f}bpm_{stamp}" if bpm else f"{drums}_{stamp}"
-    out = OUT_DIR / f"{name}.mid"
+    out = out_dir / f"{name}.mid"
     write_midi(events, out)
 
     seconds = (hits[-1][0] - hits[0][0]) / 1000
@@ -87,13 +89,25 @@ def prep(path, name, note):
             "hits": len(hits), "drums": drums, "note": note or ""}
 
 
-def update_index(rows):
-    existing = []
-    if INDEX.exists():
-        existing = list(csv.DictReader(open(INDEX, newline="")))
+def read_index(out_dir):
+    index = out_dir / "index.csv"
+    return list(csv.DictReader(open(index, newline=""))) if index.exists() else []
+
+
+def used_elsewhere(paths, out_dir):
+    """Takes already in another groove folder's index -> {take name: that folder}."""
+    wanted = {p.name for p in paths}
+    used = {}
+    for index in GROOVES.glob("*/index.csv"):
+        if index.parent.resolve() != out_dir.resolve():
+            used.update({r["source"]: index.parent for r in read_index(index.parent) if r["source"] in wanted})
+    return used
+
+
+def update_index(rows, out_dir):
     new_files = {r["file"] for r in rows}
-    merged = [r for r in existing if r["file"] not in new_files] + rows
-    with open(INDEX, "w", newline="") as f:
+    merged = [r for r in read_index(out_dir) if r["file"] not in new_files] + rows
+    with open(out_dir / "index.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=INDEX_FIELDS)
         w.writeheader()
         w.writerows(sorted(merged, key=lambda r: r["file"]))
@@ -104,16 +118,21 @@ def main():
     ap.add_argument("takes", nargs="+", help="take .csv (preferred, exact times) or .mid files; wildcards work")
     ap.add_argument("--name", help="output name (one take only; default: drums, tempo and timestamp)")
     ap.add_argument("--note", help="free-text note for the index, e.g. what was played")
+    ap.add_argument("--dir", type=Path, default=OUT_DIR, help=f"output folder (default {OUT_DIR}; grooves/heldout for tests)")
     args = ap.parse_args()
 
     paths = [Path(p) for pattern in args.takes for p in (sorted(glob.glob(pattern)) or [pattern])]
     if args.name and len(paths) > 1:
         sys.exit("--name only works with a single take")
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    rows = [r for r in (prep(p, args.name, args.note) for p in paths) if r]
+    clash = used_elsewhere(paths, args.dir)
+    if clash:
+        sys.exit("Already in another groove folder (a take can't be both training and held-out): "
+                 + ", ".join(f"{take} in {folder}" for take, folder in clash.items()))
+    args.dir.mkdir(parents=True, exist_ok=True)
+    rows = [r for r in (prep(p, args.name, args.note, args.dir) for p in paths) if r]
     if rows:
-        update_index(rows)
-        print(f"\n{len(rows)} takes in {OUT_DIR}; index at {INDEX}")
+        update_index(rows, args.dir)
+        print(f"\n{len(rows)} takes in {args.dir}; index at {args.dir / 'index.csv'}")
 
 
 if __name__ == "__main__":
