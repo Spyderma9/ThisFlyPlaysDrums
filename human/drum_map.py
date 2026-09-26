@@ -53,10 +53,50 @@ SHEET_GM_TO_TD07 = {
 }
 
 
+# Edge and rim zones count as the drum they're on, for notation and for comparing takes with scores.
+SAME_DRUM = {
+    22: 42, 26: 46,          # hat edges -> hat
+    40: 38,                  # snare rim -> snare
+    50: 48, 47: 45, 58: 43,  # tom rims -> toms
+    55: 49, 59: 51,          # crash / ride edges -> crash / ride
+}
+
+
 def normalize(note, sheet=False):
     """Map a GM drum note onto the TD-07 map. Returns (note, known)."""
     note = (SHEET_GM_TO_TD07 if sheet else GM_TO_TD07).get(note, note)
     return note, note in DRUMS
+
+
+# Hits the kit sends that nobody played. The kick pad is bolted to the rack, so hard hits on other
+# pads shake it into quiet phantom kicks (velocity 7-18, 0-25 ms later), and hard kicks bounce the beater.
+KICK = 36
+STRAY_MAX = 11      # hits this quiet are stray touches
+CROSSTALK_MS = 40   # a quiet kick this soon after another pad's hit is crosstalk...
+CROSSTALK_MAX = 30  # ...if it's at most this loud
+BOUNCE_MS = 90      # a kick this soon after a kick...
+BOUNCE_RATIO = 0.6  # ...and under 60% as loud is the beater bouncing
+
+
+class HitFilter:
+    """Feed hits in time order; check() returns why a hit is fake ("stray", "crosstalk", "bounce") or None."""
+
+    def __init__(self):
+        self.last_other = float("-inf")  # time of the last real non-kick hit
+        self.last_kick = None            # (time, velocity) of the last real kick
+
+    def check(self, t, note, vel):
+        if vel <= STRAY_MAX:
+            return "stray"
+        if note != KICK:
+            self.last_other = t
+            return None
+        if vel <= CROSSTALK_MAX and t - self.last_other < CROSSTALK_MS:
+            return "crosstalk"
+        if self.last_kick and t - self.last_kick[0] < BOUNCE_MS and vel < self.last_kick[1] * BOUNCE_RATIO:
+            return "bounce"
+        self.last_kick = (t, vel)
+        return None
 
 
 def write_midi(events, path):
@@ -65,11 +105,12 @@ def write_midi(events, path):
     track = mido.MidiTrack()
     mid.tracks.append(track)
     track.append(mido.MetaMessage("set_tempo", tempo=TEMPO_US, time=0))
-    prev = 0.0
+    prev_tick = 0
     for t, msg in events:
-        delta = int(round(mido.second2tick((t - prev) / 1000, TICKS_PER_BEAT, TEMPO_US)))
-        track.append(msg.copy(time=delta))
-        prev = t
+        # round absolute times, not gaps, so rounding errors don't add up over a long file
+        tick = int(round(mido.second2tick(t / 1000, TICKS_PER_BEAT, TEMPO_US)))
+        track.append(msg.copy(time=tick - prev_tick))
+        prev_tick = tick
     mid.save(path)
 
 
