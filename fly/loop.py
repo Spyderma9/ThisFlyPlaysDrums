@@ -2,12 +2,15 @@
 
     python -m fly.loop --groove grooves/train/X.mid --alpha 0 --out runs/<id> [--seconds 5] [--shuffled SEED]
                        [--weights runs/train/<id>/best.pt]   # a trained fly (fly.train)
+                       [--poses]                             # also record the body for fly.clip / the viewer
+    python -m fly.loop --groove X.mid --teacher --out runs/<id> --poses   # q* straight into the body; CPU, no brain
 
 Writes, all in score time (sim time - the encoder's offset; earlier hits are dropped):
   hits.mid   channel 10, the voice's out_note, velocity from contact speed, note_off 50 ms later
   hits.csv   t_ms,note,velocity (human/score.py reads it)
   hits.json  [{t_s, note, voice, velocity, contact_speed, pad, limb}]
-  meta.json  groove, alpha, seed, offsets, wiring and kit summary, timings
+  meta.json  groove, driver (fly or teacher), alpha, seed, offsets, wiring and kit summary, timings
+  poses.npz  (--poses) qpos [T, nq] float32 after every sim ms, touching [T, pads] bool, pads, offset_ms (sim time)
 """
 
 from __future__ import annotations
@@ -60,6 +63,40 @@ def simulate(rates: np.ndarray, brain, decoder, body, seed: int = 0, device: str
     return hits
 
 
+def play(q: np.ndarray, body, on_step=None) -> list:
+    """Hold the body's servos at q[t] (e.g. the teacher's q*) for each 1 ms step. on_step(t, None, q[t], hits)."""
+    hits = []
+    for t in range(len(q)):
+        new = body.step(q[t])
+        hits += new
+        if on_step is not None:
+            on_step(t, None, q[t], new)
+    return hits
+
+
+class Recorder:
+    """An on_step hook that keeps the body's pose and pad contacts after every sim ms (fly.clip, fly.viewer_export)."""
+
+    def __init__(self, body, n_steps: int):
+        self.body = body
+        self.qpos = np.zeros((n_steps, body.m.nq), dtype=np.float32)
+        self.touching = np.zeros((n_steps, len(body.pads)), dtype=bool)
+
+    def __call__(self, t, *_):
+        self.qpos[t] = self.body.d.qpos
+        self.touching[t] = self.body.touching
+
+    def save(self, path: Path, offset_ms: float) -> None:
+        np.savez_compressed(path, qpos=self.qpos, touching=self.touching, pads=np.array(self.body.pads),
+                            offset_ms=np.float64(offset_ms))
+
+
+def load_poses(run: Path) -> dict:
+    with np.load(Path(run) / "poses.npz") as z:
+        return {"qpos": z["qpos"], "touching": z["touching"], "pads": [str(p) for p in z["pads"]],
+                "offset_ms": float(z["offset_ms"])}
+
+
 def score_time(hits: list, offset_ms: float) -> list[dict]:
     out = []
     for h in hits:
@@ -100,6 +137,48 @@ def write_run(out: Path, hits: list[dict], meta: dict) -> None:
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
 
 
+def _groove_name(groove: Path) -> str:
+    return str(groove.resolve().relative_to(REPO)) if groove.resolve().is_relative_to(REPO) else str(groove)
+
+
+def _hit_summary(hits: list[dict]) -> dict:
+    return {"hits": len(hits), "hits_by_voice": {v: sum(h["voice"] == v for h in hits) for v in sorted({h["voice"] for h in hits})}}
+
+
+def teacher_run(groove: Path, out: Path, seconds: float | None = None, poses: bool = False,
+                lookahead_ms: float | None = None, preroll_ms: float | None = None) -> tuple[list[dict], dict]:
+    """The teacher's q* played straight into the body, no brain (fly.strokes' ceiling check, as a run dir).
+    Returns (hits in score time, meta)."""
+    from fly.body import Body
+    from fly.encoder import encode, read_onsets
+    from fly.strokes import PREROLL_MS, STROKES, plan, teacher
+
+    strokes = json.loads(STROKES.read_text())
+    lookahead = strokes["lookahead_ms"] if lookahead_ms is None else lookahead_ms
+    preroll = PREROLL_MS if preroll_ms is None else preroll_ms
+    enc = encode(groove, lookahead_ms=lookahead, preroll_ms=preroll)
+    n_steps = len(enc.rates) if seconds is None else int((seconds * 1000 + enc.offset_ms) / enc.dt_ms)
+    body = Body()
+    notes = plan(read_onsets(groove), enc.offset_ms, strokes["pads"])
+    q = teacher(notes, n_steps, strokes, body.rest)
+    rec = Recorder(body, n_steps) if poses else None
+    t0 = perf_counter()
+    hits = score_time(play(q, body, on_step=rec), enc.offset_ms)
+    sim_s = perf_counter() - t0
+    meta = {
+        "groove": _groove_name(Path(groove)), "driver": "teacher",
+        "offset_ms": enc.offset_ms, "lookahead_ms": lookahead, "preroll_ms": preroll, "steps": n_steps, "seconds": seconds,
+        "notes": len(notes), "dropped": sum(bool(n.dropped) for n in notes),
+        "body": {"timestep": body.m.opt.timestep, "substeps": body.substeps},
+        **_hit_summary(hits),
+        "timings": {"sim_s": round(sim_s, 2), "wall_s_per_sim_s": round(sim_s / (n_steps / 1000), 2)},
+    }
+    write_run(Path(out), hits, meta)
+    if rec is not None:
+        rec.save(Path(out) / "poses.npz", enc.offset_ms)
+    return hits, meta
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--groove", type=Path, required=True)
@@ -113,7 +192,14 @@ def main():
     ap.add_argument("--burst-ms", type=float, default=BURST_MS)
     ap.add_argument("--weights", type=Path, default=None, help="trained plastic weights from fly.train (best.pt)")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--poses", action="store_true", help="also write poses.npz (fly.clip, fly.viewer_export)")
+    ap.add_argument("--teacher", action="store_true", help="play the teacher's q* into the body instead of the fly")
     args = ap.parse_args()
+    if args.teacher:
+        _, meta = teacher_run(args.groove, args.out, args.seconds, args.poses, args.lookahead_ms, args.preroll_ms)
+        print(json.dumps({k: meta[k] for k in ("hits", "hits_by_voice", "dropped", "timings")}, indent=1))
+        print(f"wrote {args.out}")
+        return
     if args.alpha != 0:
         raise SystemExit("alpha > 0 needs the teacher strokes (Phase 3) and I* (Phase 4); only --alpha 0 runs now")
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,13 +234,14 @@ def main():
     print(f"{wiring.conn.name}: {len(rates)} steps on {device}, body dt {body.m.opt.timestep:g} s", flush=True)
 
     t1 = perf_counter()
-    raw = simulate(rates, brain, decoder, body, seed=args.seed, device=device, log_every=1000)
+    rec = Recorder(body, len(rates)) if args.poses else None
+    raw = simulate(rates, brain, decoder, body, seed=args.seed, device=device, on_step=rec, log_every=1000)
     timings["sim_s"] = perf_counter() - t1
     timings["wall_s_per_sim_s"] = timings["sim_s"] / (len(rates) / 1000)
     hits = score_time(raw, enc.offset_ms)
 
     meta = {
-        "groove": str(args.groove.resolve().relative_to(REPO)) if args.groove.resolve().is_relative_to(REPO) else str(args.groove),
+        "groove": _groove_name(args.groove), "driver": "fly",
         "alpha": args.alpha, "seed": args.seed, "shuffled": args.shuffled, "device": device,
         "weights": None if args.weights is None else str(args.weights), "rest_on_pedal": on_pedal,
         "offset_ms": enc.offset_ms, "lookahead_ms": lookahead, "preroll_ms": preroll, "burst_ms": args.burst_ms,
@@ -165,6 +252,8 @@ def main():
         "timings": {k: round(v, 2) for k, v in timings.items()},
     }
     write_run(args.out, hits, meta)
+    if rec is not None:
+        rec.save(args.out / "poses.npz", enc.offset_ms)
     print(json.dumps({k: meta[k] for k in ("hits", "hits_by_voice", "timings")}, indent=1))
     print(f"wrote {args.out}")
 
