@@ -1,5 +1,5 @@
 {
- "about": "D2 cue groups: one MaleCNS v1.0 Johnston's organ subtype per drum, picked by `python -m fly.probe --fine-jo --drop-kc-in --no-graph --tag fine_nokcin` (stock weights, every edge onto Kenyon cells removed, 200 Hz x 50 ms, 20 trials). legs = measured latency/peak per leg for that group.",
+ "about": "D2 cue groups: one MaleCNS v1.0 Johnston's organ subtype per drum, picked by `python -m fly.probe --fine-jo --drop-kc-in --no-graph --tag fine_nokcin` (stock weights, every edge onto Kenyon cells removed, 200 Hz x 50 ms, 20 trials). legs = measured latency/peak per leg for that group. Hand edit (user-approved Sat 26 Sept): kick and tom3 swapped from the greedy pick (kick JO-A1_L, 4 neurons, 11.7 Hz) so kick gets the strong JO-EV1_L and tom3 takes JO-EV6_R.",
  "probe": {
   "connectome": "malecns-v1.0",
   "rate_hz": 200.0,
@@ -17,33 +17,60 @@
  "max_latency_ms": 60,
  "drums": {
   "kick": {
-   "group": "JO-A1_L",
+   "group": "JO-EV1_L",
    "limbs": [
     "hind_right"
    ],
-   "score_hz": 11.67,
+   "score_hz": 24.17,
    "bodyIds": [
-    35351,
-    80565,
-    232880,
-    387990
+    33970,
+    34388,
+    55759,
+    74384,
+    77969,
+    79237,
+    80492,
+    81376,
+    87594,
+    89103,
+    98638,
+    111529,
+    117698,
+    119378,
+    123879,
+    126081,
+    156929,
+    162684,
+    169407,
+    219501,
+    260581,
+    265416,
+    276829,
+    301867,
+    324669,
+    325276,
+    426515,
+    495313,
+    531021,
+    918248,
+    467266335
    ],
    "legs": {
     "front_left": {
-     "latency_ms": 35,
-     "peak_hz": 4.63
+     "latency_ms": 30,
+     "peak_hz": 10.0
     },
     "front_right": {
-     "latency_ms": 70,
-     "peak_hz": 1.5
+     "latency_ms": 40,
+     "peak_hz": 8.25
     },
     "hind_left": {
-     "latency_ms": 60,
-     "peak_hz": 5.65
+     "latency_ms": 25,
+     "peak_hz": 19.35
     },
     "hind_right": {
-     "latency_ms": 40,
-     "peak_hz": 11.67
+     "latency_ms": 30,
+     "peak_hz": 24.17
     }
    }
   },
@@ -377,61 +404,37 @@
    }
   },
   "tom3": {
-   "group": "JO-EV1_L",
+   "group": "JO-EV6_R",
    "limbs": [
     "front_right",
     "front_left"
    ],
-   "score_hz": 8.25,
+   "score_hz": 5.0,
    "bodyIds": [
-    33970,
-    34388,
-    55759,
-    74384,
-    77969,
-    79237,
-    80492,
-    81376,
-    87594,
-    89103,
-    98638,
-    111529,
-    117698,
-    119378,
-    123879,
-    126081,
-    156929,
-    162684,
-    169407,
-    219501,
-    260581,
-    265416,
-    276829,
-    301867,
-    324669,
-    325276,
-    426515,
-    495313,
-    531021,
-    918248,
-    467266335
+    211443,
+    242202,
+    520630,
+    901811,
+    189216879,
+    399935690,
+    975394666
    ],
    "legs": {
     "front_left": {
-     "latency_ms": 30,
-     "peak_hz": 10.0
+     "latency_ms": 60,
+     "peak_hz": 6.34
     },
     "front_right": {
-     "latency_ms": 40,
-     "peak_hz": 8.25
+     "latency_ms": 50,
+     "peak_hz": 5.0
     },
     "hind_left": {
-     "latency_ms": 25,
-     "peak_hz": 19.35
+     "latency_ms": 85,
+     "peak_hz": 5.48
     },
     "hind_right": {
-     "latency_ms": 30,
-     "peak_hz": 24.17
+     "latency_ms": 65,
+     "peak_hz": 5.83
     }
    }
   },

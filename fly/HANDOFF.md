@@ -1,154 +1,144 @@
 # Fly side handoff
 
-Written Sat Sept 26, 03:00 EDT. Deadline Sun Sept 27, 11:00 EDT, with a code freeze at 08:00.
+Updated Sat Sept 26, ~08:00 EDT, at the end of Phase 1. Deadline Sun Sept 27, 11:00 EDT; code freeze Sun 08:00.
 
-## Start here (for the new session)
+## Start here (for a new session)
 
-You're continuing work on the fly side of Fly Drums. The previous session's context is gone, and this file replaces it.
+You're continuing the fly side of Fly Drums. The previous session's context is gone; this file replaces it and is complete on its own.
 
-1. **Read three files first:**
+1. **Read first:**
    - this file, in full
    - `/home/daniel/ThisFlyPlaysDrums/CLAUDE.md` (local, gitignored: scope, rules, architecture, data formats)
-   - the approved plan at `/home/daniel/.claude/plans/i-own-the-fly-splendid-creek.md` (phases, timings, stops, risks)
-2. **This file wins on conflicts.** It's the newest record. Known conflict: `CLAUDE.md` still says "MaleCNS v1.0 via neuPrint" and "flybody or NeuroMechFly". Both are superseded: MaleCNS comes by **bulk download**, and the body is **flybody**. Don't edit `CLAUDE.md` yourself. The user moves permanent decisions into it; tell them about the conflict at the start of the session.
-3. **Rules that apply to every step:**
-   - Never `git commit`, `git push` or amend.
-   - Edit only `fly/`, `viewer/` and `.env.example`.
-   - Ask every open question in one batch before starting, and check `CLAUDE.md` and this file first before asking.
-   - Stop at each gate below and ask; don't choose for the user.
-4. **Then do the next step:** finish the MaleCNS v1.0 bulk switch (see "In progress"). The first command is under "Next concrete step" at the end of this file. When the switch is done and tested, **stop and tell the user before continuing.**
+   - the plan at `/home/daniel/.claude/plans/i-own-the-fly-splendid-creek.md` (phases, timings, risks)
+2. **This file wins on conflicts.** It's the newest record. Don't edit `CLAUDE.md`; the user moves permanent decisions into it themselves. **At the start of the session, tell the user about these conflicts:**
+   - `CLAUDE.md` says "MaleCNS v1.0 via neuPrint". Superseded: bulk download.
+   - `CLAUDE.md` says "flybody or NeuroMechFly". Superseded: flybody.
+   - `CLAUDE.md` gives KC→MBON as the example trainable subset. Superseded: cue → descending-neuron synapses (D3), with the mushroom body's inputs cut (D8).
+   - `CLAUDE.md` says the encoder shifts notes ~100–200 ms early. Measured cue → motor latency is 20–55 ms; lookahead = latency + stroke lead (Phase 3).
+   - The kit is **12 drums played with four legs**. `CLAUDE.md` doesn't say so yet.
+3. **Rules for every step:**
+   - Never `git commit`, `git push` or amend. The user commits.
+   - Edit only `fly/`, `viewer/` and `.env.example`. Never `human/`, `grooves/` or the root `.gitignore`.
+   - Ask every open question **in one batch before starting**, after checking this file and `CLAUDE.md`.
+   - **Stop at the end of each phase:** tell the user what was done and what the next phase is, then wait. Stop at every decision gate; don't choose for the user.
+   - GPU: short runs (a few minutes) are pre-approved. **Stop and ask before training or any long run.** The GPU is shared with other Unraid containers.
+   - Python 3.10-compatible code. Write like the surrounding code: dense, few comments.
+4. **Where we are:** Phases 0 and 1 are done. **Next is Phase 2** (spec below).
+   - Before starting, ask the open questions under "Open questions" in one batch.
+   - Stop at Milestone 1 and report.
 
-## Updates from session 2 (Sat Sept 26, 03:00–04:00). These win over anything below.
+## State in one paragraph
 
-**Done:**
-- **MaleCNS bulk switch:** code done, 7/7 tests pass.
-  - `connectome.py`: `fetch_malecns()` downloads three files, resumable through `.part` files. The body-stats file isn't needed; soma positions are in the annotations.
-  - `load_malecns()`: a neuron is a body with a `superclass` (166,700 of 211,577). Sign comes from `consensus_nt`, with unclear or missing counted as excitatory. Soma is `somaLocation`, else `tosomaLocation`.
-  - Test: `fly/tests/test_connectome.py`.
-  - `neuprint-python` and `python-dotenv` are removed from `environment.yml`. `.env.example` now says the token is optional.
-- **Real data checked:** leg MNs by `exitNerve`: ProLN 81, MesoLN 116, MetaLN 122.
-- **Weights file:** downloaded to `data/malecns/` on the dev machine. About **152M edges** (2,318 batches × 65,536 rows), sorted by weight descending.
-  - Too big for the dev machine's RAM (1.2 GB free).
-  - The GPU CSR may not fit in 8 GB, so a minimum-synapse threshold may be needed. Measure in Phase 0.
-- **Tailscale:** installed on the dev machine from the apt repo (tailscale.com itself is unreachable from this network).
-  - Tailnet `spyderma9.github`.
-  - `tower` is **not** in it yet, so the user needs to join the Unraid box. The only peer is `N1`, shared from another tailnet, with its SSH port closed.
-- **`fly/STATUS.md`:** partner-facing status. Also published at https://claude.ai/artifact/Tsq1wJP5gZdwH7VS8ZLnFG from the scratchpad file `fly-status.html`. Republish it when STATUS.md changes.
+**Git and working tree:**
+- Branch `server` at `07e85c2`, which includes Sam's merged `midi` work: `human/`, grooves, and 21 training takes in `grooves/train/`.
+- **Uncommitted:**
+  - modified: `fly/HANDOFF.md`, `fly/connectome.py`, `fly/drums.py`, `fly/tests/test_encoder.py`
+  - new: `fly/probe.py`, `fly/cues.json`, `fly/tests/test_probe.py`
 
-**New decisions (user-approved):**
+**Server:**
+- The server copy of `fly/` is rsynced from this machine and matches it.
+- **The server doesn't have `grooves/` or `human/` yet.** Sync the whole repo before Phase 2 runs (see Commands).
+- Nothing is running on the server, and no tmux sessions are open.
 
-| Decision | Choice |
+**Tests:** 10/10 pass locally.
+
+## People and ownership
+
+- **The user** owns `fly/` and `viewer/` (not created yet) on branch `server`. Also `.env.example`.
+- **Sam** (partner, she/her) owns `human/`, `grooves/` and the root `.gitignore`. **Her work is done:**
+  - capture, cleaning, sheet-music conversion, `play_midi.py`
+  - **`human/score.py`** (scoring is hers: we only produce hits files)
+  - 21 training takes (about 5 minutes)
+  - She was asked to put ≥ 2 held-out grooves in `grooves/heldout/` by Sun 02:00. Not there yet.
+- **`human/score.py`:**
+  - Reads played hits from `hits.csv` (`t_ms,note,velocity`) or `.mid`. The reference can be `.mid`, MusicXML or a text grid.
+  - Pairs hits within 60 ms, per drum, folding edges and rims.
+  - **So our hits must be in score time.**
+  - Usage: `python human/score.py <reference.mid> runs/<id>/hits.csv`.
+- **Training takes:** channel-10 `.mid`, TD-07 notes, `note_on` followed by `note_off` 50 ms later, 1 s of silence before the first hit, fake hits already filtered. `grooves/train/index.csv` lists them; the encoder ignores it.
+- The FlyWire fallback probe was skipped. The user got instructions to pass to Sam, if she wants to run it: free the GPU, then `/mnt/user/dev/fx "python -m fly.probe --connectome flywire"`.
+
+## Machines and access
+
+**Dev machine** (this one): Debian, `/home/daniel/ThisFlyPlaysDrums`.
+- Python 3.13, no conda, no GPU, no tmux. Only ~1.2 GB of RAM free, so don't load full MaleCNS here.
+- **Test venv** (it lives in `/tmp`, so recreate it if missing):
+  ```bash
+  python3 -m venv --without-pip /tmp/fdvenv
+  pip3 --python /tmp/fdvenv/bin/python install -q numpy pandas pyarrow mido pytest scipy
+  pip3 --python /tmp/fdvenv/bin/python install -q torch --index-url https://download.pytorch.org/whl/cpu
+  cd /home/daniel/ThisFlyPlaysDrums && /tmp/fdvenv/bin/python -m pytest fly/tests -q -p no:cacheprovider
+  ```
+- `fly/vendor/fly-brain` here is a sparse clone (`code/` only), so the brain tests run but FlyWire data isn't here.
+- Tailscale was installed from Tailscale's apt repo (tailscale.com itself is unreachable from this network). Tailnet `spyderma9.github`.
+
+**Server:** Dell T5600 running Unraid 7.3.2. 2× Xeon E5-2670 (AVX, **no AVX2**), 64 GB RAM, RTX 3060 Ti 8 GB.
+- **SSH:** `ssh tower`. `~/.ssh/config` maps it to `t5600.tail3495cd.ts.net`, user root, key `~/.ssh/id_ed25519`. The machine is shared into our tailnet from juan.borgesjr's account; the key was added in Unraid's Users → root.
+- **Storage:**
+  - Repo at `/mnt/user/dev/ThisFlyPlaysDrums`.
+  - `/mnt/user/dev` is the ZFS dataset `/mnt/pool/dev`. There are no array disks.
+  - `/root` is in RAM, so keep everything under `/mnt/user/dev`.
+- **Container `flydrums`:**
+  - Image `nvidia/cuda:12.6.3-base-ubuntu22.04`, `--runtime=nvidia --gpus all`, `-e NVIDIA_DRIVER_CAPABILITIES=all -e MUJOCO_GL=egl`, `--shm-size=8g`, `sleep infinity`.
+  - **Mounts `/mnt/pool/dev` at `/mnt/user/dev`.** This bypasses Unraid's FUSE layer (shfs), which made conda crawl.
+  - apt packages (`git curl libgl1 libegl1 libosmesa6 libglib2.0-0`) live in the container layer. Reinstall them if you recreate the container.
+- **Env:**
+  - Miniforge at `/mnt/user/dev/miniforge3`, env `flydrums`, from `fly/environment.yml`: conda-forge plus pip torch cu126, numpy 1.26.4.
+  - Versions: torch 2.14.0+cu126, mujoco 3.14.0, dm_control 1.0.47, flybody 0.1.0.
+  - `LD_LIBRARY_PATH` is set as an env var through `conda env config vars`. Without it, pyarrow fails with GLIBCXX_3.4.31 when torch is imported first. Conda prints a harmless "overwriting variable" warning on every activation; filter it with `grep -vE "WARNING|overwriting"`.
+- **Run anything in the env:** `ssh tower '/mnt/user/dev/fx "<command>"'`. `fx` does `docker exec` into the container with the env active, from the repo root.
+  - For ad-hoc scripts outside the repo, add `PYTHONPATH=.`.
+  - Nested quoting through ssh + fx + `python -c` breaks easily. Write the script to the scratchpad, `scp` it to `tower:/mnt/user/dev/`, and run it.
+- **Long runs:** in host tmux, `ssh tower 'tmux new-session -d -s NAME "/mnt/user/dev/fx \"python -u -m fly.X ...\" > /mnt/user/dev/X.log 2>&1; echo DONE >> /mnt/user/dev/X.log"'`. Watch the log with the Monitor tool.
+- **Sync code after editing:**
+  - `fly/` only: `rsync -az --chown=root:root --exclude vendor/ --exclude __pycache__/ fly/ tower:/mnt/user/dev/ThisFlyPlaysDrums/fly/`
+  - **whole repo** (needed once now, for `grooves/` and `human/`): `rsync -az --chown=root:root --exclude data/ --exclude fly/vendor/ --exclude runs/ --exclude __pycache__/ ./ tower:/mnt/user/dev/ThisFlyPlaysDrums/`
+- **On the server only:**
+  - fly-brain is a full clone with `data/` at `fly/vendor/fly-brain`.
+  - MaleCNS is in `data/malecns/`.
+  - Results are in `runs/bench/` and `runs/probe/`.
+  - `setup_env.sh`, `dl_malecns.sh` and one-off analysis scripts are in `/mnt/user/dev/`.
+- Claude Code isn't installed on the server; everything is driven over SSH from the dev machine.
+
+## Code inventory
+
+| File | State |
 |---|---|
-| Encoder | Fly side (`fly/encoder.py`). Sam (the partner) doesn't build one. |
-| Scoring | **Sam builds it** on the laptop (hits, misses, extras, timing, loudness per drum, plus a human-take baseline). `evaluate.py` only runs held-out and shuffled runs and writes hits files. |
-| Hits out | `hits.mid` + `hits.json` + **`hits.csv` (`t_ms, note, velocity`)** for Sam |
-| Drum scope | **All 12 TD-07 drums** (36, 44, 38, 37, 42, 46, 48, 45, 43, 49, 51, 53), played like a person on a kit modified so the fly can reach. Supersedes the 3-voice `drums.py`. |
-| Limbs | Front left and right legs hold sticks (the hands). **Back right leg = kick pedal (36).** **Back left leg = hi-hat pedal (44)** and hi-hat open/closed. Middle legs don't play. |
-| Sticking (teacher) | Right-handed default. Right stick: hi-hat, ride, bell, crash. Left stick: snare, cross-stick. Toms and fast repeats alternate R-L. |
-| Hi-hat | Like a real kit. The back-left leg holds the pedal down (closed) and lifts it for 46. A stick hit on the hat sounds 42 or 46 depending on the pedal at contact. A pedal press alone sends 44. |
+| `fly/drums.py` | **12 voices** in fixed order: kick, hat_pedal, snare, xstick, hat_closed, hat_open, tom1, tom2, tom3, crash, ride, ride_bell. Each has `notes` (edges and rims folded as in Sam's `SAME_DRUM`), `out_note`, and `limbs` (sounding leg first). `LEGS = (front_left, front_right, hind_left, hind_right)`. |
+| `fly/encoder.py` | `encode(midi, lookahead_ms=150, dt_ms=1, burst_ms=30, rate_min_hz=50, rate_max_hz=200)` → `Encoded(rates[T, 12] Hz in VOICES order, voices, dt_ms, offset_ms)`. Score time t (s) is due at sim step `(t*1000 + offset_ms)/dt_ms`, and its burst starts `lookahead_ms` earlier; `offset_ms = lookahead_ms`. Rule-based and never sees a target. 3 tests. |
+| `fly/brain.py` | `Brain(conn, cue_groups{name: idx}, plastic_mask=None, batch, device)`, `.init_state()`, `.step(state, voice_rates[B,V], current=None, generator=None)` → `(conductance, delay_buffer, spikes, v, refrac)`. Imports fly-brain's AlphaLIF/Poisson/MODEL_PARAMS from `fly/vendor/fly-brain/code/run_pytorch.py`. `_FrozenMatmul`: fixed CSR, gradients reach spikes only. `PlasticEdges`: trainable `nn.Parameter` on the masked edges, removed from the frozen matrix. `current` [B,N] is in mV, added to the Poisson drive (for α·I\*). **Every cue neuron gets fly-brain's no-refractory treatment.** Verified on CUDA. 3 tests. |
+| `fly/connectome.py` | `Connectome(name, neurons, pre, post, weight)` (row = matrix index), `.to_torch(device, transpose)` → CSR `W[post, pre]`, `.shuffled(seed)` (permutes post endpoints; keeps degrees and presynaptic sign). `fetch_malecns()` downloads to `data/malecns/`, resumable. `load_malecns()` → 166,700 neurons (bodies with a superclass), 25,582,938 edges; sign from `consensus_nt` (gaba/glutamate/histamine = −1); soma x/y/z; columns in `NEURON_COLUMNS` including `rootSide`. `load_flywire(annotate=False)`; `annotate=True` merges the Schlegel et al. cell types. 1 test. |
+| `fly/bench.py` | `python -m fly.bench sugar` (our 1 ms Brain vs fly-brain at 0.1 ms, FlyWire) and `python -m fly.bench speed [--min-synapses N]` (MaleCNS VRAM and speed). Writes `runs/bench/`. |
+| `fly/probe.py` | Phase 1 probe: graph pass (hops) + GPU simulation pass + charts. Flags: `--connectome`, `--only`, `--no-graph`, `--graph-only`, `--fine-jo` (also writes `cues.json` via `pick_cues`), `--weight-scale`, `--drop-kc-kc`, `--drop-kc-in`, `--tag`, `--rate`, `--stim-ms`, `--trials`. `groups(conn, fine_jo)` gives candidates, readouts (leg MNs: ProLN/MetaLN × side, side = somaSide else rootSide) and KC/MBON. 3 tests. |
+| `fly/cues.json` | **D2 result:** for each of the 12 drums, the JO group name, `bodyIds`, `limbs`, and per-leg latency/peak. Use the bodyIds, not the group names. |
+| `fly/environment.yml` | As above. |
+| `fly/STATUS.md` | Partner-facing status **as of 04:00, now stale** (it predates Phase 0/1). Published at https://claude.ai/artifact/Tsq1wJP5gZdwH7VS8ZLnFG from a scratchpad file that no longer exists. Update only if the user asks. |
+| **Stubs** (docstring only) | `fly/decoder.py`, `fly/body.py`, `fly/train.py`, `fly/evaluate.py` |
+| **Not created** | `fly/loop.py`, `fly/strokes.py`, `viewer/` |
 
-**To do after Phase 0** (not started): rewrite `drums.py` for 12 drums with allowed limbs per drum. The encoder gets 12 cue groups. The body gets 10 stick pads, a kick pedal and a hi-hat pedal. Strokes need per-stick IK templates for each pad. D2 and D5 now cover the forelegs and both hind legs.
+## Decisions (all user-approved)
 
-**Partner facts:**
-- Sam's `human/prep_takes.py` writes cleaned takes to `grooves/train/` (resolves open question 1).
-- **Pushed (Sat 04:30):** 21 cleaned takes in `grooves/train/` plus `index.csv` (`2489756`), and **`human/score.py`** (`2d48e6c`). `origin/midi` is at `2d48e6c`.
-- **`score.py`** reads played hits from `hits.csv` (`t_ms, note, velocity`) or `.mid`, and pairs them with the reference within 60 ms by default. So **`hits.csv` and `hits.mid` must be in score time**: subtract the encoder's `offset_ms` from sim time. The training takes also start with 1 s of silence.
-- The partner is Sam (she/her, per the user).
-- Sam's note on `fly/environment.yml` being on `midi` doesn't matter: it's only in the shared base commit, so no conflict.
+| ID | Decision |
+|---|---|
+| D1 | Simulator: fly-brain's LIF, imported from `fly/vendor/`, at dt = 1 ms, with gradients only on the trainable subset. **Verified:** r = 0.998 against fly-brain's own 0.1 ms run. |
+| Data | MaleCNS v1.0 by **bulk download** (neuPrint only hosts v0.9). FlyWire v783 is the fallback. |
+| D6 | Body: **flybody**, Python 3.10. |
+| Kit | **12 TD-07 drums, played like a person** on a kit placed within the fly's reach. **Front left and right legs hold the sticks. Hind right = kick pedal (36). Hind left = hi-hat pedal (44)**, which also opens and closes the hat. Middle legs don't play. |
+| Sticking | Teacher strokes are right-handed. Right stick: hat, ride, bell, crash. Left stick: snare, cross-stick. Toms and fast repeats alternate R-L. |
+| Hi-hat | Like a real kit. The hind-left leg holds the pedal down (closed) and lifts it for 46. A stick hit on the hat pad sounds **42 or 46 depending on the pedal at contact**. A pedal press alone sends 44. |
+| **D8** | **Runaway fix:** stock weights (wScale 0.275, no rescale) **plus every edge onto Kenyon cells removed** (the probe's `--drop-kc-in`). The shuffled control gets the same cut. |
+| **D2** | Cue groups = one JO fine subtype per drum, from `fly/cues.json` (below). |
+| **D3** | Trainable = **synapses from the 12 cue groups onto descending neurons** (`superclass == "descending_neuron"`). About 7,469 edges for all JO; fewer for the 12 chosen groups. |
+| **D5** | Motor neurons → joints by **muscle annotation** (the `type` column). Joint target = rest + gain·(flexor-type rate − extensor-type rate). Mapping below. |
+| D4 | Hits out: `runs/<id>/hits.mid` (channel 10, the voice's `out_note`, velocity from contact speed), **`hits.csv` (`t_ms,note,velocity`) for Sam's `score.py`**, and `hits.json` (`{t_s, note, voice, velocity, contact_speed}`), **all in score time**. |
+| α | Teacher forcing enters the leg MNs as current α·I\* (I\* from the decoder's pseudo-inverse), with α annealed from 1 to 0. The loss is always on the fly's decoded joint angles (MuJoCo isn't differentiable). |
+| Teacher | Any training `.mid` (kit takes, sheet music, grids). **Never held-out grooves.** Strokes come from per-drum IK templates. |
+| Encoder | Fly side (`fly/encoder.py`). Rule-based and never sees the target (the demo rule). |
+| Scoring | Sam's `human/score.py`. `evaluate.py` only runs the α = 0 held-out, shuffled and untrained runs and writes their hits files. |
+| Viewer | Fly side, `viewer/`: Three.js in Chrome replays a recorded run and sends hits to the TD-07 through Web MIDI. `play_midi.py hits.mid` is the backup. Timing is undecided; Sun 02:00–06:00 was recommended. |
+| Gates left | D7 at Sat 22:00: switch to the scikit-learn readout baseline if the loss hasn't dropped. |
 
-### Phase 0: done (Sat ~05:20 EDT). Stopped before Phase 1; waiting for the user's go-ahead.
-
-**Server access:**
-- The box is `t5600.tail3495cd.ts.net`, shared into our tailnet from juan.borgesjr's account. `~/.ssh/config` aliases it as `tower` (user root, key `~/.ssh/id_ed25519`, added in Unraid's Users → root).
-- Unraid 7.3.2, no array disks. Everything lives on the ZFS pool `pool`: `/mnt/user/dev` is the same data as `/mnt/pool/dev`.
-
-**Container:**
-- `flydrums`, image `nvidia/cuda:12.6.3-base-ubuntu22.04`, `--runtime=nvidia --gpus all`, env `MUJOCO_GL=egl`, `sleep infinity`.
-- It mounts **`/mnt/pool/dev` at `/mnt/user/dev`**. It bypasses shfs deliberately: shfs made conda crawl.
-- apt packages (git, curl, libgl1, libegl1, libosmesa6, libglib2.0-0) are in the container layer. Reinstall them if the container is recreated.
-
-**Env and helpers:**
-- Miniforge is at `/mnt/user/dev/miniforge3`, env `flydrums`, built from `fly/environment.yml`, which now uses **conda-forge + pip torch cu126**. The `pytorch` channel is gone. `python-dotenv` and `neuprint-python` are removed.
-- Env var `LD_LIBRARY_PATH` = env lib + `/usr/local/nvidia/lib{,64}`, set with `conda env config vars`. Without it, torch loads the system libstdc++ and pyarrow fails with GLIBCXX_3.4.31. Conda prints a harmless "overwriting variable" warning on every activation.
-- `/mnt/user/dev/fx "<cmd>"` runs a command in the container with the env active, from the repo root.
-- `setup_env.sh` and `dl_malecns.sh` are in `/mnt/user/dev`.
-- The repo got to the server by **rsync from the dev machine** (not git clone), with the uncommitted changes. After an edit, resync with: `rsync -az --chown=root:root --exclude vendor/ --exclude __pycache__/ fly/ tower:/mnt/user/dev/ThisFlyPlaysDrums/fly/`.
-- fly-brain is a full clone with `data/` in `fly/vendor/fly-brain`.
-- MaleCNS is in `data/malecns/` on the server, downloaded directly.
-
-**Not done from Step 0:** Claude Code isn't installed on the host, and the plan, skills and `/root/.claude` weren't copied. Everything was driven over SSH from the dev machine instead.
-
-**Measured:**
-- **Imports on AVX-only Xeons:** torch 2.14.0+cu126 (CPU capability DEFAULT), mujoco 3.14.0, dm_control 1.0.47, flybody 0.1.0, numpy 1.26.4. No illegal instructions.
-  - CUDA and sparse CSR on the GPU work.
-  - flybody `fruitfly.xml`: nq 109, nu 78, timestep 1e-4. It steps.
-- **pytest on the server:** 7/7.
-- **fly-brain benchmark** (`main.py --pytorch --t_run 1 --n_run 1`, FlyWire, 0.1 ms): 44.6 s per simulated second, 0.38 GB VRAM, 391 active, 17,311 spikes.
-- **`python -m fly.bench sugar`** (1 s, 8 trials): our Brain at 1 ms vs fly-brain's TorchModel at 0.1 ms.
-  - Pearson r = 0.998 over active neurons. Median rate ratio 1.02 over 314 neurons ≥ 5 Hz. Top responders are 3–7% lower in ours. **D1 holds.**
-  - Wall-clock per simulated second: 103 s (fly-brain) vs 10.3 s (ours), batch 8.
-- **`python -m fly.bench speed`** (MaleCNS):
-  - 166,700 neurons, **25,582,938 edges** (152M raw rows, mostly fragments). No threshold needed. 61,210 KC→MBON edges.
-  - Load 44 s, 6.2 GB peak RAM. Build 18 s. VRAM 0.78 GB.
-  - **4.93 s per simulated second** at batch 1.
-  - 150-step gradient window: 2.08 s, 1.07 GB. Gradients reach KC→MBON.
-- **Annotations:**
-  - Leg MN types name their muscle (Ti flexor 37, Acc. ti flexor 47, Ti extensor 12, Tr flexor 22, ...). By side: ProLN 41 L / 40 R, MesoLN 58/58, MetaLN 62 L / 60 R.
-  - JO subtypes: 672 neurons, types JO-A/B/CA/CL/CM/DA/DP/ED/EV/FD/FV/mz.
-  - 1,314 DNs, 4,064 KCs, 97 MBONs.
-- Results are in `runs/bench/*.json` on the server.
-
-### Phase 1: probe run. Stopped at the D2/D3/D5 gate (plus a new gain decision), waiting for the user.
-
-**Code:**
-- `fly/probe.py`: graph pass + GPU simulation pass + charts.
-  - Flags: `--connectome flywire`, `--only`, `--no-graph`, `--weight-scale`, `--drop-kc-kc`, `--drop-kc-in`, `--tag`.
-  - Candidates: JO families A–F × side, plus leg proprioceptors (chordo/campani/hairplate × leg pair × side), min 3 neurons.
-  - Readouts: leg MNs, ProLN/MetaLN × side. Side is `somaSide`, falling back to `rootSide` (JO neurons only have `rootSide`).
-- `fly/tests/test_probe.py`: 2 tests, 9/9 total pass.
-- `connectome.py`: keeps `rootSide`. `load_flywire(annotate=True)` downloads the Schlegel et al. FlyWire annotations into `data/flywire/`.
-- The user skipped the FlyWire fallback probe. They were given instructions to pass on: free the GPU, run `/mnt/user/dev/fx "python -m fly.probe --connectome flywire"`, readouts are DN_L/DN_R.
-
-**Bug found and fixed:** pandas `groupby(...).groups` returned NaN-key groups ("JO-nan_L" = ~80k neurons), which contaminated the first run.
-
-**Findings** (`runs/probe/malecns*/report.json` on the server, 200 Hz cue × 50 ms, 20 trials):
-- No spontaneous activity (baseline 0 Hz).
-- **Runaway in the mushroom body at the stock gain:** after the cue, KCs sit at ~80–120 Hz and MBONs at ~130–190 Hz until the window ends.
-  - Cause: MaleCNS gives ~1.9× the input synapses per neuron of FlyWire (745 vs 393). FlyWire in fly-brain also includes 1–4-synapse edges, so it isn't a threshold difference.
-  - Dropping KC→KC edges (1.15M synapses) only halves the runaway.
-  - Weight scale 0.53 removes it but weakens the legs (JO-C_L reaches nothing).
-  - KC activation is bistable: at 0.6–0.8 it's either off or runaway.
-  - **Cutting every edge onto KCs (`--drop-kc-in`)** removes it at any gain and keeps full leg drive.
-- **Motor path:** JO → descending neurons → leg MNs, **2 hops**. Top relays are DNp10, DNb05, DNg15, pIP1, DNp18, DNg50, DNg35. The MB isn't on it (via KC→MBON is 5–6 hops).
-- **Right-side JO-A/B are poorly connected in v1.0:** 880 vs 16,869 output synapses for JO-A R vs L, so JO-A_R and JO-B_R drive nothing. Use left JO-A/B, or other families.
-- **Stock gain + `--drop-kc-in`:**
-
-  | Cue | Latency (front L / front R / hind L / hind R) | Peak |
-  |---|---|---|
-  | JO-E_L | 20 / 30 / 20 / 25 ms | 5–15 Hz per MN |
-  | JO-E_R, JO-C_L, JO-F_L | 20–55 ms | similar |
-
-  Lingering MN activity is 1–3 Hz in the last 100 ms.
-- **Responding MNs** are mostly extensor-type (Fe reductor, Ti extensor, Ta levator; hind: sternal rotators, Tr flexor, MNhl59).
-  - Leg MNs: 96 flexor-type, 30 extensor-type, 77 other.
-- **D3 edge counts:** JO→DN 7,469 edges (45,631 synapses). All→DN 566,762. DN→leg MN 3,006 (917 onto flexor-type). 396 DNs get JO input, and 59 of those also reach flexor-type MNs.
-
-**Decided by the user (Sat ~07:00, "all recommended"):**
-- **Gain / runaway fix:** stock fly-brain weights (wScale 0.275, no rescale) + **every edge onto Kenyon cells removed** (the probe's `--drop-kc-in`). The shuffled control gets the same cut.
-- **D2:** 12 cue groups = JO fine subtypes × side. `python -m fly.probe --fine-jo --drop-kc-in --no-graph --tag fine_nokcin` picks one per drum into `runs/probe/malecns_fine_nokcin/cues.json`.
-  - Score = the weakest peak over the drum's legs, counting only legs reached ≤ 60 ms.
-  - Picked greedily, most constrained drum first.
-- **D3:** trainable = synapses from the 12 cue groups onto descending neurons.
-- **D5:** annotation-based MN type → flybody joint. Decoder = rest + gain·(flexor-type − extensor-type) per joint.
-- **Encoder lookahead** = MN latency (~20–45 ms) + stroke lead from Phase 3.
-
-**Code for the decisions:**
-- `fly/drums.py` is rewritten for **12 drums**: kick, hat_pedal, snare, xstick, hat_closed, hat_open, tom1–3, crash, ride, ride_bell.
-  - `limbs` lists the legs that move to play each drum, sounding leg first. hat_open = front_right + hind_left; toms = both front legs.
-  - Edge and rim folding follows Sam's `SAME_DRUM`.
-- Encoder tests are updated for it: 10/10 pass.
-
-**Phase 1 done (Sat ~07:40).** The D2 picks are saved in **`fly/cues.json`** (tracked): 12 groups, 212 neurons, each with bodyIds and its per-leg latency/peak. Local copy of the run: `runs/probe/malecns_fine_nokcin/`.
+**Cue groups (`fly/cues.json`):**
 
 | Drum | Group (n) | Drum | Group (n) |
 |---|---|---|---|
@@ -159,255 +149,135 @@ You're continuing work on the fly side of Fly Drums. The previous session's cont
 | hat_closed | JO-ED2_a_L (23) | ride | JO-ED2_b_L (11) |
 | hat_open | JO-EV3_L (22) | ride_bell | JO-ED1_L (13) |
 
-**Caveats:**
-- Every group drives all 4 legs at 20–65 ms and 5–24 Hz. **Leg selectivity has to be learned** (D3, JO→DN).
-- Kick got a 4-neuron group because greedy toms took JO-EV1_L, the best hind driver. The swap option offered to the user: kick = JO-EV1_L, tom3 = JO-EV6_R (weaker front drive, 5 Hz).
-- In the fine run, all right-side JO-A/B/ED1/ED2_c/DP types are silent (sparse v1.0 reconstruction).
+Picked by `python -m fly.probe --fine-jo --drop-kc-in --no-graph --tag fine_nokcin`. Score = the weakest peak over the drum's legs, counting only legs reached ≤ 60 ms. Greedy, most constrained drum first. **Every group drives all four legs** (20–65 ms, 5–24 Hz), so leg selectivity has to be learned.
 
-**Next: Phase 2.** Encoder with 12 cue groups from `cues.json` → Brain with the KC-input cut and plastic JO→DN edges → `decoder.py` (D5 map) → `body.py` (flybody fixed at the thorax, sticks, 10 pads + 2 pedals, contacts) → `loop.py` writing `hits.mid`/`.csv`/`.json` in score time.
+## Measured facts
 
-## State in one paragraph
+**Speed and memory:**
+- MaleCNS load: 44 s, 6.2 GB RAM. Brain build: 18 s. VRAM: 0.78 GB (1.07 GB with a 150-step gradient window).
+- **Brain: 4.9 s wall per simulated second** at batch 1. Batch 8 ≈ 1.3 s per trial-second.
+- 150-step backprop window: 2.1 s.
+- **MuJoCo flybody at its 1e-4 s timestep: 22 s wall per simulated second.** It's single-threaded, and these Xeons are old. This is now the slowest part of the loop.
 
-**Git:** branch `server`, last commit `6a4d687` "foundations for serverside", pushed, working tree clean.
+**Network (stock gain, KC inputs cut):**
+- No spontaneous activity.
+- JO → descending neurons (DNp10, DNb05, DNg15, pIP1, DNp18, DNg50, DNg35, ...) → leg MNs: **2 hops**.
+- Cue → MN latency 20–55 ms. Lingering MN activity 1–3 Hz for ~250 ms after a cue.
+- The MBONs keep 8–15 Hz of lingering activity even with KC inputs cut. That's harmless for now.
 
-**Done:** code for Phase 0 exists and is tested on the dev machine's CPU with toy data.
+**Right-side JO:** JO-A/B/ED1/ED2_c/DP barely connect in v1.0 (for example 880 vs 16,869 output synapses, JO-A R vs L).
 
-**Never run on the server.** The server isn't reachable from the dev machine yet.
+**Leg MNs:**
+- Counts: ProLN 41 L / 40 R, MetaLN 62 L / 60 R.
+- Types, front: Acc. ti flexor 10, Ti flexor 5, Ta depressor 5, Fe reductor 4, ltm 4, Acc. tr flexor 3, Ti extensor 2, ltm2-femur 2, Ta levator 3 (R).
+- Types, hind: Ti flexor 8–9, Acc. tr flexor 4–8, Acc. ti flexor 8, Tr flexor 5, Sternal posterior rotator 4, ltm 3–4, Sternotrochanter 3, Pleural remotor/abductor 2, plus unnamed (`?`) and `MNhl59`.
+- **Mostly extensor-type MNs respond at first** (Fe reductor, Ti extensor, Ta levator; hind: sternal rotators, Tr flexor). 59 JO-driven DNs also reach flexor-type MNs.
 
-**In progress:** switching the connectome source to **MaleCNS v1.0 via bulk download**. None of that code is written yet.
+**flybody `fruitfly.xml`**
+(at `…/site-packages/flybody/fruitfly/assets/fruitfly.xml` in the env):
+- **Units:** cm, gravity −981. Timestep 1e-4 s.
+- **Root:** the joint `free` is a **free joint**. Pin the thorax to the world for drumming.
+- **Leg actuators are position servos:** `ctrl` = target angle in rad, kp 0.8 (coxa/femur) or 0.4 (tibia/tarsus), ctrlrange = joint range.
+- **Front-left joint ranges:** coxa_abduct [−1, 0.7], coxa_twist [−0.8, 0.8], coxa [−0.2, 1.7], femur_twist [−1, 1], femur [−0.15, 2], tibia [−1.35, 1.3], tarsus [−0.7, 1.2]. `tarsus2_*` is **tendon-driven** [−0.9, 0.9].
+- **32 leg actuators on the four playing legs**, in model order:
+  - `{coxa_abduct, coxa_twist, coxa, femur_twist, femur, tibia, tarsus, tarsus2}_{T1_left, T1_right, T3_left, T3_right}`
+  - plus `adhere_claw_*` (keep at 0) and wing/abdomen/head actuators (hold still).
+- **Leg bodies:** `coxa_T1_left, femur_T1_left, tibia_T1_left, tarsus_T1_left, tarsus2–4_T1_left, claw_T1_left`, and the same for the other legs.
 
-**Stop point:** the user asked to be told once the switch is complete, before any work continues past it.
+## Phase 2 spec: untrained loop, end to end → Milestone 1
 
-## People and ownership
+Goal: `python -m fly.loop --groove <x>.mid --alpha 0 --out runs/<id>` runs encoder → brain → decoder → body. It writes `hits.mid`, `hits.csv` and `hits.json` in score time. The untrained fly's legs move and produce some (wrong) contacts.
 
-| Owner | Area | Branch |
-|---|---|---|
-| User | `fly/` (server side) and `viewer/` (not created yet) | `server` |
-| Partner | `human/`, `grooves/`, the root `.gitignore` | `midi` (at `c628f47`) |
+1. **Wiring** (`fly/wiring.py`, new): one function builds everything the brain needs, so `loop`, `train` and `evaluate` can't drift apart.
+   - `load_malecns()` → **remove every edge whose post is a Kenyon cell** (`type` starts with "KC") (D8).
+   - Optional `.shuffled(seed)` for the control. Apply the KC cut the same way, and recompute the masks on the shuffled edges.
+   - Cue groups: map `cues.json` bodyIds → row indices, in `drums.VOICES` order.
+   - Plastic mask (D3): `pre ∈ cue neurons & post ∈ descending neurons`.
+   - Leg MN indices per leg with their `type` (as in `probe.groups`).
+2. **Encoder:** already 12-voice. For Phase 2, set `lookahead_ms` to a placeholder of about 40 (≈ latency). The real value comes after Phase 3's stroke lead.
+   - The probe drove 200 Hz for 50 ms. Consider `burst_ms=50` so cues match what was measured.
+3. **Decoder** (`fly/decoder.py`, D5): fixed and differentiable (torch), and it never sees a target.
+   - **Rates:** exponential filter on each MN's spikes (τ ≈ 20 ms).
+   - **Per leg and joint:** target = rest + gain·(mean rate of that joint's + types − mean rate of its − types), clipped to ctrlrange. Joints with no MNs hold rest.
+   - **Proposed mapping** ("+" = flexion or the named direction):
 
-- Never edit `human/`, `grooves/` or the root `.gitignore`. Put fly-only ignores in `fly/.gitignore`.
-- `.env.example` at the repo root is ours (the user asked for it).
-- **Checked at `c628f47`:** no files overlap between the two branches, so they merge cleanly.
-- The partner "has begun training on his side". Nothing training-related is on `midi`. **Unresolved:** whether that means recording kit takes or writing training code. Kit takes save to `takes/`, which is gitignored and so never reaches the server through git.
-- Never `git commit`, `git push` or amend. The user commits.
+     | Joint | + types | − types |
+     |---|---|---|
+     | tibia | Ti flexor, Acc. ti flexor | Ti extensor |
+     | femur | Tr flexor, Acc. tr flexor, Sternotrochanter | Tr extensor |
+     | femur_twist | Fe reductor | — |
+     | coxa_twist | Sternal anterior rotator | Sternal posterior rotator |
+     | coxa | Pleural promotor | Pleural remotor, Pleural remotor/abductor |
+     | coxa_abduct | Sternal adductor | abductor types |
+     | tarsus | Ta depressor | Ta levator |
+     | tarsus2 | ltm, ltm1-tibia, ltm2-femur | — |
 
-## Machines
+     Unmapped types (`MNhl59`, `?`, and so on) are ignored. List them when you build it.
+   - **Verify each joint's sign against flybody's axis** before trusting the table: move the joint +0.3 rad and check that the stick or tarsus tip moves the expected way. Keep a per-joint ±1 table.
+   - **Gains:** about 20 Hz of difference → about half the joint's range. Set by hand once.
+   - **Also expose the decoder's pseudo-inverse**, which maps joint targets back to MN currents I\*. Phase 4 needs it for α.
+4. **Body** (`fly/body.py`):
+   - Load `fruitfly.xml` with `dm_control.mjcf` and **pin the thorax**: delete the free joint so the root body is fixed to the world.
+   - **Sticks:** capsule geoms on each front leg's tibia or tarsus. Size them to the fly (it's about 0.25 cm long).
+   - **Kit:** 10 stick pads plus 2 pedals (hind right = kick, hind left = hat).
+     - Place them **inside each leg's reachable workspace**: sample random joint configurations, collect the stick-tip and tarsus positions, and put pads at reachable points spread apart.
+     - Pads for right-stick drums go on the right-stick side, snare and cross-stick on the left, toms reachable by both.
+   - **Control:** `Body.step(targets[32])` sets `ctrl` for the 32 leg actuators (others hold 0) and runs 1 ms of physics (10 substeps at 1e-4).
+   - **Contacts:**
+     - The first contact of a stick or leg with a pad records a hit, followed by a refractory window (~30 ms).
+     - `contact_speed` = relative normal speed at contact. `velocity = clip(round(k·speed), 1, 127)`.
+     - Hat pad note = 42 if the hind-left pedal is pressed, else 46. Pedal presses send 36 or 44.
+   - **Speed:** 22 s per simulated second at 1e-4. Test whether 2e-4 s (5 substeps) is stable with the thorax pinned, and **ask the user before changing the timestep**.
+5. **Loop** (`fly/loop.py`):
+   - CLI: `--groove`, `--alpha 0`, `--out`, `--seconds` (truncate), `--shuffled SEED`, `--device`.
+   - **Each 1 ms step:** encoder rates[t] → `brain.step` → decoder(spikes) → `body.step` → contacts.
+   - **Score time:** `t_score_ms = t_sim_ms − offset_ms`. Drop hits with t < 0.
+   - **Writes:**
+     - `hits.mid`: mido, channel 9, tempo meta, `note_on` + `note_off` 50 ms later, like Sam's files.
+     - `hits.csv`: header `t_ms,note,velocity`.
+     - `hits.json`: `[{t_s, note, voice, velocity, contact_speed}]`.
+     - `meta.json`: groove, α, seed, offset, and the wiring summary.
+   - Viewer files (spikes, poses) can wait for Phase 4b, but keep the loop easy to extend.
+6. **Tests** (in `fly/tests/`):
+   - decoder shapes and mapping signs
+   - body: a scripted stick driven into a pad gives exactly one hit with the right note; the hat note follows the pedal
+   - loop writes the files in score time (use a stub brain so the test is fast)
+7. **Milestone 1:**
+   - Sync the whole repo to the server first (see Commands).
+   - Run a short training groove, for example `grooves/train/HH-BD-SD-HO-HP_94bpm_20260926_031104.mid` with `--seconds 5` (≈ 2–3 minutes of wall-clock at current speeds).
+   - Check that the legs move, some contacts happen, the files exist, and `python human/score.py <groove> runs/<id>/hits.csv` runs on the server (the env has mido).
+   - The user plays `hits.mid` on the kit from the laptop: `python human/play_midi.py hits.mid`.
+   - **Then stop and report.** Phase 3 (strokes via IK, the ceiling check) is next.
 
-**Dev machine:** Debian, hostname `debian`, at `/home/daniel/ThisFlyPlaysDrums`.
-- Python 3.13, with no conda, no GPU and no tmux.
-- No `claude` CLI on PATH (Claude Code runs as the VS Code extension).
-- **Tailscale is not installed,** so `tower` doesn't resolve.
+## Open questions (ask in one batch before starting Phase 2)
 
-**Server:** Unraid host `root@tower`, over Tailscale MagicDNS. **Unreachable from the dev machine so far.**
-- Hardware: Dell T5600, 2× Xeon E5-2670 (AVX, no AVX2), 64 GB RAM, RTX 3060 Ti 8 GB.
-- The repo goes to `/mnt/user/dev/ThisFlyPlaysDrums`. It isn't cloned yet.
-- Claude Code will run on the Unraid host itself.
-- The CUDA container isn't built, the conda env isn't created, and nothing is benchmarked.
-- `/root` lives in RAM on Unraid, so anything persistent (Claude config, conda, repo) must live on `/mnt/user`.
-- The GPU is shared with other containers. **Before every long run, stop and ask the user to free it.**
-
-## Built and working
-
-| File | What it does | Tested? |
-|---|---|---|
-| `fly/drums.py` | Three voices keyed by TD-07 note, each with a note written back to `hits.mid` and a leg. hihat {42, 22, 46, 26} → 42, right foreleg. snare {38, 40, 37} → 38, left foreleg. kick {36} → 36, kick leg. Crash, toms and ride are dropped. Numbers checked against the partner's `human/drum_map.py` on `midi`. | imports |
-| `fly/encoder.py` | `encode(midi_path, lookahead_ms=150, dt_ms=1, burst_ms=30, rate_min_hz=50, rate_max_hz=200)` → `Encoded(rates[T, 3] Hz, voices, dt_ms, offset_ms)`. Score time t is due at sim step `(t*1000 + offset_ms)/dt_ms`, and its cue burst starts `lookahead_ms` earlier. `offset_ms = lookahead_ms`. Velocity scales the rate linearly. Overlapping bursts keep the higher rate. | 3 tests pass |
-| `fly/brain.py` | `Brain(conn, cue_groups, plastic_mask=None, batch=1, device="cuda")`, one 1 ms step via `step(state, voice_rates[B, V], current=None, generator=None)`. Imports fly-brain's `AlphaLIF`, `PoissonSpikeGenerator` and `MODEL_PARAMS` from `fly/vendor/fly-brain/code/run_pytorch.py` (imported, never copied). The frozen weights use our own `_FrozenMatmul`, a custom autograd function with fixed CSR `W` and `W.T`, so gradients reach the spikes but never the weights. The trainable edges are a `PlasticEdges` `nn.Parameter` over the edges in `plastic_mask`, and they are removed from the frozen matrix. `current` is added to the Poisson drive in mV (for α·I\*). | 2 tests pass |
-| `fly/connectome.py` | `Connectome` dataclass (neurons DataFrame, where row = matrix index; `pre`, `post`, signed `weight`), `.to_torch(device, transpose)` giving CSR `W[post, pre]`, and `.shuffled(seed)` which permutes post endpoints (keeps every in/out degree and the presynaptic sign). The sign rule: gaba, glutamate and histamine are −1, everything else +1. `load_flywire()` reads fly-brain's `data/` files. `fetch_malecns()` / `load_malecns()` are **the neuPrint version, now obsolete** (see Known bugs). | shuffle: 1 test passes |
-| `fly/environment.yml` | Conda env `flydrums`, Python 3.10. Adds matplotlib, python-dotenv, pytest, and via pip dm_control and flybody (`git+https://github.com/TuragaLab/flybody.git`). | not built |
-| `fly/tests/` | `test_encoder.py` (3 tests), `test_brain.py` (3 tests, skipped if `fly/vendor/fly-brain/code` is missing) | 6/6 pass |
-| `.env` (gitignored) | `NEUPRINT_TOKEN=<64-char token>`, checked working against neuPrint | — |
-| `.env.example` | Template, committed | — |
-
-**Stubs** (docstring only): `fly/decoder.py`, `fly/body.py`, `fly/train.py`, `fly/evaluate.py`.
-
-**Not created yet:** `fly/probe.py`, `fly/strokes.py`, `fly/loop.py`, `viewer/`.
-
-**Local only:** fly-brain is sparse-cloned into `fly/vendor/fly-brain` (gitignored, `code/` only). Its `data/` folder is not fetched, so `load_flywire()` can't run on the dev machine.
-
-## In progress: switching to MaleCNS v1.0 bulk download (0% of code done)
-
-Files at `https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/`:
-
-| File | Size | Needed? |
-|---|---|---|
-| `body-annotations-male-cns-v1.0-minconf-0.5.feather` | 14.5 MB | yes |
-| `body-neurotransmitters-male-cns-v1.0.feather` | 43.3 MB | yes (for the sign) |
-| `connectome-weights-male-cns-v1.0-minconf-0.5.feather` | 1,051 MB | yes |
-| `body-stats-male-cns-v1.0-minconf-0.5.feather` | 778 MB | only if soma positions aren't in the annotations |
-
-**Column names are unverified.** From third-party code (github.com/seeton/fly):
-- weights: `body_pre, body_post, weight`
-- annotations: `bodyId, type, instance, superclass, somaSide, ...`
-- neurotransmitters: column names unknown
-
-**Next step:** read the real schemas. Download the two small files and read the headers of the two big ones with an HTTP range request (Arrow IPC puts the schema right after the 8-byte `ARROW1` magic). Then:
-1. Rewrite `connectome.py`:
-   - `fetch_malecns()` downloads the four files to `data/malecns/`, resumable with `.part` files.
-   - `load_malecns()` joins the annotations and neurotransmitter tables, keeps only real neurons (decide the filter from the columns), maps bodyIds to indices, and signs the weights.
-   - Keep `load_flywire()` and `shuffled()` as they are.
-2. Remove `_client()`, the neuPrint imports, and `DATASET = "male-cns:v1.0"`.
-3. Decide whether `neuprint-python` stays in `environment.yml`.
-4. Update the `CLAUDE.md` line that says "MaleCNS v1.0 via neuPrint" to say bulk download. The user asked to be told first; see the decisions list at the end.
-5. Add a loader test built on a tiny synthetic feather file.
-6. **Then stop and tell the user the switch is done.**
-
-## Decisions approved by the user (and why)
-
-| Decision | Choice | Why |
-|---|---|---|
-| D1 simulator | fly-brain's LIF, imported from `fly/vendor/`, stepped at dt = 1 ms, with gradients only on the trainable subset. **Reopen and ask** if it can't do 1 ms steps or gradients. The fallback is our own LIF with the same parameters. | CLAUDE.md names fly-brain. It's GPL, so import it, never copy it. |
-| D6 body | flybody, Python 3.10 | FlyGym 2 needs Python ≥ 3.12, and the partner is on 3.10 |
-| Connectome | MaleCNS **v1.0 via bulk download** (changed from "via neuPrint") | neuPrint only hosts `male-cns:v0.9`. Bulk is one download, similar total time, and doesn't depend on the API during the event. |
-| D4 hits out | `hits.mid`: channel 10, the voice's note written back to `hits.mid` (from `drums.py`), velocity from contact speed, same format as the input, so the partner's `play_midi.py` plays it on the TD-07. Plus `hits.json` holding `{t_s, note, voice, velocity, contact_speed}`. | The user wants every simulated stick–pad contact heard on the real kit, with the fly's own velocity. |
-| Viewer | Owned by the user (fly side). It lives in `viewer/`: Three.js in Chrome, replaying a recorded run, sending hits to the TD-07 through Web MIDI in sync. `play_midi.py hits.mid` is the backup. | The simulation is slower than real time. Run files pass only between `fly/` and `viewer/`, so the fly side sets their format. |
-| α | Teacher forcing injected into leg motor neurons as current α·I\* (I\* from the decoder's pseudo-inverse). α anneals from 1 to 0. The loss is always on the fly's decoded joint angles. | The body sends no feedback to the brain, so α only affects learning if it enters the brain. |
-| Loss space | Joint angles, since MuJoCo isn't differentiable | Stated in the user's brief |
-| Teacher source | Any training `.mid` (kit takes, sheet music, grids). **Never held-out grooves.** | Approved as recommended |
-| Teacher trajectories | Per-drum inverse-kinematics stroke templates timed to the hits | Kit takes carry only times and velocities |
-| Drum folding | Pad variants fold onto three voices; crash, toms and ride are dropped | The fly has three pads |
-| Server | Claude Code on the Unraid host, `root@tower`, repo at `/mnt/user/dev/ThisFlyPlaysDrums` | User's choice |
-| GPU sharing | The user pauses other containers themselves. Stop and ask before every long run. | User's choice |
-| Grooves | The user asks the partner. Code uses whatever is in `grooves/train` and `grooves/heldout`. Synthetic development grooves go only in `data/dev_grooves/` (gitignored, never used for evaluation). | Don't block on the partner |
-| Python | 3.10 everywhere | Matches the teammate |
-
-**Gates still pending** (stop and ask the user):
-- D2: cue neuron groups
-- D3: trainable synapses
-- D5: which motor neurons drive which joints
-- D7 at Sat 22:00: switch to the scikit-learn fallback readout if the loss hasn't dropped
-
-D2, D3 and D5 come after the Phase 1 probe, with its numbers. The probe checks whether cue input reaches the leg motor neurons, how fast, and whether KC→MBON is on the path. The encoder's lookahead comes from the measured latency.
+1. **Kick cue group.** Kick got JO-A1_L, only 4 neurons (11.7 Hz on its leg). Option: swap so kick = JO-EV1_L (24 Hz on hind right) and tom3 = JO-EV6_R (5 Hz on the front legs). The user hasn't answered.
+2. **MuJoCo speed.** May the body use a 2e-4 s timestep (5 substeps per ms) if it's stable? That roughly halves the 22 s per simulated second.
+3. **Commit.** The Phase 1 changes are uncommitted. The user commits when they choose; just remind them.
 
 ## Tried, failed or ruled out
 
-- **FlyGym 2:** ruled out, needs Python ≥ 3.12.
-- **`male-cns:v1.0` on neuPrint:** doesn't exist. The public datasets are `hemibrain:v1.2.1`, `male-cns:v0.9`, `manc:v1.0`, `manc:v1.2.1`, `manc:v1.2.3`, `mushroombody`, `optic-lobe:v1.0.1` and `optic-lobe:v1.1`.
-- **neuPrint token format:** not a JWT. neuPrint moved to a new auth system; 64 alphanumeric characters is expected. A fake token gets HTTP 401 with "invalid or expired token".
-- **`GET https://neuprint.janelia.org/api/profile`:** timed out (HTTP 000). Irrelevant: authenticated Cypher queries work.
-- **Our own LIF:** not chosen (it's the fallback for D1).
-- **`python3 -m venv` on the dev machine:** fails (no ensurepip, and it needs sudo). The workaround is below.
-- **SSH to `root@tower`:** "Could not resolve hostname". Tailscale isn't installed on the dev machine, and there's no ssh config entry.
-- **Account skills sync:** `~/.claude/skills/synced/*/manifest.json` still has `lastUpdated: 0`, with pending `avoid-ai-writing-tells`, `docs`, `import-memory`, `morning`, `skill-creator`, `xlsx`, `pptx`, `pdf` and `docx`. It can't be forced; it may sync after a Claude Code restart.
-
-## Measured numbers
-
-- **neuPrint `male-cns:v0.9`:** 176,571 `:Neuron` nodes (Cypher count through the user's token, HTTP 200).
-- **MaleCNS v1.0 file sizes:** see the table above.
-- **fly-brain `MODEL_PARAMS`:** tauSyn 5 ms, tDelay 1.8 ms, v0 = vReset = vRest = −52 mV, vThreshold −45 mV, tauMem 20 ms, tRefrac 2.2 ms, scalePoisson 250, wScale 0.275. Its native DT is 0.1 ms.
-- **At dt = 1 ms:** the synaptic delay becomes 1 step and the refractory period 2 steps. A spike's total effect on voltage is ≈ 0.25·wScale·w at both 0.1 ms and 1 ms, worked out by hand, not measured.
-- **Not measured yet:**
-  - cue → motor-neuron latency
-  - VRAM use
-  - wall-clock speed per simulated second
-  - fly-brain benchmark
-  - any score
-
-## Commands
-
-**Tests on the dev machine (CPU):**
-- The scratchpad venv is session-specific, so recreate it:
-
-  ```bash
-  python3 -m venv --without-pip /tmp/fdvenv
-  pip3 --python /tmp/fdvenv/bin/python install -q numpy pandas pyarrow mido pytest
-  pip3 --python /tmp/fdvenv/bin/python install -q torch --index-url https://download.pytorch.org/whl/cpu
-  ```
-- If `fly/vendor/fly-brain` is missing:
-
-  ```bash
-  git clone --depth 1 --filter=blob:none --sparse https://github.com/eonsystemspbc/fly-brain fly/vendor/fly-brain
-  git -C fly/vendor/fly-brain sparse-checkout set code
-  ```
-- Run the tests:
-
-  ```bash
-  cd /home/daniel/ThisFlyPlaysDrums && /tmp/fdvenv/bin/python -m pytest fly/tests -q -p no:cacheprovider
-  ```
-
-**Server (planned, not yet run).** Run from the repo root in the CUDA container:
-
-```bash
-conda env create -f fly/environment.yml && conda activate flydrums
-git clone https://github.com/eonsystemspbc/fly-brain fly/vendor/fly-brain      # full clone, with data/
-python -m fly.connectome                   # fetch MaleCNS into data/malecns/ (being rewritten for bulk)
-python -m fly.connectome --summary         # counts by superclass and exitNerve
-python -m fly.connectome --flywire         # FlyWire fallback summary
-pytest fly/tests
-```
-
-**tmux:** no sessions exist and nothing is running. tmux isn't installed on the dev machine; long runs go in tmux on the server.
-
-## Step 0 handoff to the server (not done, blocked)
-
-1. **Blocked:** the dev machine needs a route to `root@tower`. Either the user installs Tailscale (`curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up`) or gives a LAN IP.
-2. `ssh root@tower`, then clone the `server` branch into `/mnt/user/dev/ThisFlyPlaysDrums`.
-3. scp to the server:
-   - `CLAUDE.md` into the checkout
-   - the plan into the server's Claude plans folder
-   - `.env`
-   - `~/.claude/skills/{skill-creator,webapp-testing,frontend-design,pdf}`
-
-   Point `/root/.claude` at `/mnt/user` so it survives a reboot.
-4. The user starts Claude Code on the Unraid host. Phase 0 continues there: build the CUDA 12.x container with `--runtime=nvidia` and `/mnt/user/dev` mounted, install Miniconda, create the env, test that `import mujoco, torch` work (no AVX2), run the fly-brain benchmark, load MaleCNS, and compare our 1 ms rates with fly-brain's 0.1 ms "sugar" run.
-
-## Known bugs and unverified assumptions
-
-- **`connectome.py`, `fetch_malecns()` / `load_malecns()`:** use `DATASET = "male-cns:v1.0"` through neuPrint, which doesn't exist. **Broken as committed.** They're being replaced by the bulk loader.
-- **`load_flywire()`:** assumes the first CSV column is the FlyWire ID. It's untested, because the data isn't on the dev machine.
-- **`brain.py`:**
-  - `_FrozenMatmul` and `PlasticEdges` are tested on CPU only, not CUDA.
-  - `exc_indices` is a CPU tensor indexing fly-brain's `refrac_steps`, which will be on the GPU. That indexing is untested there.
-  - fly-brain's code is at `fly/vendor/fly-brain/code`; `run_pytorch.py` imports from `benchmark.py` in that same folder.
-- **`encoder.py`:** `lookahead_ms=150` is a placeholder until the Phase 1 latency is measured.
-- **`environment.yml`:** the `pytorch` conda channel with `pytorch-cuda=12.1` may be stale (PyTorch stopped publishing conda packages after 2.5). flybody's pip install may pull a MuJoCo build that differs from conda's.
-- **`fly/vendor/`** is gitignored, so the server needs its own full clone.
-- **Scratchpad files from this session** won't exist in a new session: the complete annotations feather and a partial neurotransmitters feather.
+- **FlyGym 2:** needs Python ≥ 3.12.
+- **`male-cns:v1.0` on neuPrint:** doesn't exist (only v0.9).
+- **The `pytorch` conda channel:** stale at 2.5, and clashes with newer MKL. Replaced by pip cu126 wheels.
+- **conda on `/mnt/user` (shfs):** crawled. Fixed by mounting `/mnt/pool/dev`.
+- **tailscale.com install script:** that host times out from this network. The apt repo at pkgs.tailscale.com works.
+- **Runaway fixes that didn't work well:**
+  - Dropping KC→KC edges: only halves the runaway.
+  - Weight scale 0.53: no runaway, but weak legs.
+  - Scales 0.6–0.8: KC activity is bistable, either off or runaway.
+- **pandas `groupby(...).groups`** returns NaN-key groups. This caused a bad first probe run (a "JO-nan" group of ~80k neurons). Use explicit masks.
+- **Account skills sync** (`avoid-ai-writing-tells`, `docx`, and others): still pending, and can't be forced.
 
 ## Files that matter
 
 | Path | Notes |
 |---|---|
-| `CLAUDE.md` | Local and gitignored. Holds scope, the architecture, decided data formats and skills. **Still says MaleCNS "via neuPrint".** |
-| `~/.claude/plans/i-own-the-fly-splendid-creek.md` | Approved phased plan with timings, stops, risks and skills |
-| `~/.claude/projects/-home-daniel-ThisFlyPlaysDrums/memory/` | Holds one feedback memory: ask every question in one batch before starting, and check CLAUDE.md or the docs before asking |
-| `~/.claude/skills/{skill-creator,webapp-testing,frontend-design,pdf}` | Installed from github.com/anthropics/skills at commit 3337550 |
-| `fly/` | All fly-side code |
-| `data/` | Gitignored. Connectome caches (`data/malecns/`) and `data/dev_grooves/` |
-| `runs/` | Gitignored. Run outputs: `runs/<id>/`, `runs/probe/`, `runs/eval/` |
-| `human/drum_map.py` on `origin/midi` | The partner's note map (read-only for us). Keep `fly/drums.py` in step with it. |
-| `grooves/rock_beat.*`, `grooves/funk_16ths.*` on `origin/midi` | The only grooves so far. Nothing is in `grooves/train` or `grooves/heldout`. |
-
-## Open questions for the user
-
-1. What does "training on his side" mean: kit takes, or training code? If takes, how do they get to the server?
-2. How many training and held-out grooves will the partner write, and when? Evaluation needs at least 2 held-out grooves by Sun 02:00.
-3. Does the partner know that `viewer/` and `.env.example` belong to the fly side?
-4. How does the dev machine reach `root@tower`: Tailscale or a LAN IP?
-
-## Next concrete step
-
-Finish the MaleCNS v1.0 bulk switch (see "In progress"), then stop and tell the user before starting Step 0 or Phase 0.
-
-1. **Recreate the test environment** if `/tmp/fdvenv` is missing (see "Commands").
-2. **Read the real v1.0 schemas.** This downloads about 58 MB to `/tmp/mcns`; for the two big files it reads only the header. Run it exactly as written; the heredoc needs `EOF` at the start of its line.
-
-```bash
-B=https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome
-mkdir -p /tmp/mcns && cd /tmp/mcns
-for f in body-annotations-male-cns-v1.0-minconf-0.5.feather body-neurotransmitters-male-cns-v1.0.feather; do curl -s -o $f $B/$f; done
-for f in connectome-weights-male-cns-v1.0-minconf-0.5.feather body-stats-male-cns-v1.0-minconf-0.5.feather; do curl -s -r 0-262143 -o head_$f $B/$f; done
-/tmp/fdvenv/bin/python - <<'EOF'
-import pyarrow as pa, pyarrow.feather as ft, pyarrow.ipc as ipc
-for f in ["body-annotations-male-cns-v1.0-minconf-0.5.feather", "body-neurotransmitters-male-cns-v1.0.feather"]:
-    t = ft.read_table(f); print(f"\n== {f}: {t.num_rows:,} rows\n{t.schema}")
-    print(t.slice(0, 3).to_pandas().T)
-for f in ["connectome-weights-male-cns-v1.0-minconf-0.5.feather", "body-stats-male-cns-v1.0-minconf-0.5.feather"]:
-    print(f"\n== {f}\n{ipc.read_schema(pa.py_buffer(open('head_' + f, 'rb').read()[8:]))}")
-EOF
-```
-
-   If the header schema parse fails, the file may use a different layout. Download the file's footer instead (the last 64 KB, via a range request) or ask the user.
-3. **Check which columns exist:** neuron type, class and superclass, `exitNerve` or leg-nerve labels, soma position, neurotransmitter, and a way to tell real neurons from fragments. Write the loader from what you find.
-4. **Rewrite `fly/connectome.py`'s MaleCNS parts** as described under "In progress". Keep `Connectome`, `to_torch`, `shuffled` and `load_flywire`. Add a test in `fly/tests/` built on tiny synthetic feather files, and run the whole suite.
-5. **Tell the user** the switch is done. Give them the proposed `CLAUDE.md` wording ("MaleCNS v1.0 via bulk download"; the neuPrint token is optional) and the open questions below. Wait for their go-ahead.
+| `CLAUDE.md` | Local and gitignored. Scope, architecture, data formats. **Has the conflicts listed in Start here.** |
+| `~/.claude/plans/i-own-the-fly-splendid-creek.md` | Approved plan: phases, timings, stops, risks |
+| `~/.claude/projects/-home-daniel-ThisFlyPlaysDrums/memory/` | Feedback memories: ask every question in one batch, and stop at the end of each phase |
+| `fly/` | All fly-side code (see Code inventory) |
+| `data/` | Gitignored. `data/malecns/` (on both machines; the dev copy is the full 1 GB download), `data/flywire/` |
+| `runs/` | Gitignored. On the server: `runs/bench/`, `runs/probe/malecns*/` (`report.json`, `hops.png`, `response.png`, `timecourse.png`). Locally: `runs/probe/malecns_fine_nokcin/` |
+| `human/drum_map.py` | Sam's note map (read-only). Keep `fly/drums.py` in step with it. |
+| `grooves/train/*.mid` | 21 training takes. `grooves/heldout/` is still empty. |
