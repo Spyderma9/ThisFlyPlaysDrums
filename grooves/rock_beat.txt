@@ -1,0 +1,13 @@
+# Basic rock beat, 2 bars.
+# One row per drum; each character is one step (16 steps = one 4/4 bar of 16th notes).
+#   x = hit   X = accent   o = ghost note   - or . = rest   | and spaces are ignored
+# Rows in the same block play together; a blank line starts the next block.
+# Row names: BD kick, SD snare, RIM, XS cross-stick, HH closed hat, HO open hat, HP hat pedal,
+#            T1 T2 T3 toms, CR crash, RD ride, RB ride bell (or a raw MIDI note number)
+bpm 100
+steps 16
+
+CR  x--------------- | ----------------
+HH  --x-x-x-x-x-x-x- | x-x-x-x-x-x-x-x-
+SD  ----X-------X--- | ----X-------X---
+BD  x-------x-x----- | x-------x-x-----
