@@ -71,7 +71,7 @@ def normalize(note, sheet=False):
 # Hits the kit sends that nobody played. The kick pad is bolted to the rack, so hard hits on other
 # pads shake it into quiet phantom kicks (velocity 7-18, 0-25 ms later), and hard kicks bounce the beater.
 KICK = 36
-STRAY_MAX = 11      # hits this quiet are stray touches
+STRAY_MAX = 11      # kicks this quiet are stray touches (other pads keep their soft hits)
 CROSSTALK_MS = 40   # a quiet kick this soon after another pad's hit is crosstalk...
 CROSSTALK_MAX = 30  # ...if it's at most this loud
 BOUNCE_MS = 90      # a kick this soon after a kick...
@@ -86,11 +86,11 @@ class HitFilter:
         self.last_kick = None            # (time, velocity) of the last real kick
 
     def check(self, t, note, vel):
-        if vel <= STRAY_MAX:
-            return "stray"
         if note != KICK:
             self.last_other = t
             return None
+        if vel <= STRAY_MAX:
+            return "stray"
         if vel <= CROSSTALK_MAX and t - self.last_other < CROSSTALK_MS:
             return "crosstalk"
         if self.last_kick and t - self.last_kick[0] < BOUNCE_MS and vel < self.last_kick[1] * BOUNCE_RATIO:
