@@ -5,6 +5,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/OrbitControls.js";
+import { BrainPanel } from "./brain.js";
 
 const RUNS = new URL("../runs/", location.href);
 const S = 10; // scene units per cm
@@ -275,6 +276,26 @@ function animateKit(simMs) { // fly/scene.py frame_state
 
 let run = null; // {id, v, hits, poses, byPad, lanes, endS}
 
+let brain = null; // BrainPanel, or null when runs/model/neurons.* is missing
+
+async function setBrain(id, v, voiceColors) {
+  if (!brain) {
+    try {
+      brain = new BrainPanel(document.getElementById("brain"), { runsUrl: RUNS, voiceColors });
+      await brain.load();
+    } catch (err) {
+      console.warn("brain panel off:", err.message);
+      brain = null;
+      document.getElementById("brain").classList.add("no-brain");
+      document.querySelector("#brain .brain-empty").hidden = false;
+      return;
+    }
+  }
+  if (!v.spikes) return brain.setRun(null);
+  const [spikes, b] = await Promise.all([getBuffer(`${id}/spikes.bin`), getJSON(`${id}/brain.json`)]);
+  brain.setRun({ spikes, brain: b, viewer: v });
+}
+
 async function loadRun(id) {
   ui.loading.hidden = false;
   ui.loading.textContent = "Loading the run…";
@@ -286,6 +307,7 @@ async function loadRun(id) {
     getJSON(`${id}/scene.json`), getJSON(`${id}/hits.json`), getBuffer(`${id}/poses.bin`),
   ]);
   buildKit(sc);
+  await setBrain(id, v, sc.voice_colors);
   hits.sort((x, y) => x.t_s - y.t_s);
   const byPad = {};
   for (const h of hits) {
@@ -297,7 +319,9 @@ async function loadRun(id) {
   run = { id, v, hits, poses: new Float32Array(poses), byPad, lanes, endS, midiNext: 0, voiceColors: sc.voice_colors };
   ui.total.textContent = endS.toFixed(2);
   ui.lanes.setAttribute("aria-valuemax", endS.toFixed(2));
-  const who = v.driver === "teacher" ? "Teacher's strokes played into the body"
+  const who = v.driver === "teacher" && v.spikes ? "Teacher plays, brain listens"
+    : v.driver === "teacher" ? "Teacher's strokes played into the body"
+    : v.alpha > 0 ? `The fly's brain, guided by the teacher (α = ${v.alpha})`
     : v.weights ? "The trained fly, on its own" : "The untrained fly, on its own";
   const groove = (v.groove || "").split("/").pop();
   ui.runInfo.textContent = `${who}. ${groove}, ${hits.length} hits.`;
@@ -521,8 +545,9 @@ function drawRecent(s) {
 
 // ---------- loop ----------
 
-function resize() {
-  const w = innerWidth, h = innerHeight;
+function resize() { // the stage fills its grid column, not the window
+  const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+  if (!w || !h) return;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -551,8 +576,10 @@ function frame(perf) {
     ui.lanes.setAttribute("aria-valuetext", `${s.toFixed(2)} seconds`);
     drawLanes(s);
     drawRecent(s);
+    brain?.update(sim);
   }
   renderer.render(scene, camera);
+  brain?.render();
 }
 
 // ---------- files ----------
@@ -616,7 +643,7 @@ function wire() {
     }
     if (/^[1-6]$/.test(e.key)) setView(VIEW_KEYS[+e.key - 1]);
   });
-  addEventListener("resize", resize);
+  new ResizeObserver(resize).observe(renderer.domElement);
 }
 
 function showError(err) {
@@ -645,8 +672,8 @@ async function main() {
   const index = await getJSON("viewer_index.json");
   if (!index.length) throw new Error("no exported runs in runs/viewer_index.json");
   ui.runPicker.replaceChildren(...index.map((r) => {
-    const who = r.driver === "teacher" ? "teacher" : "fly";
-    return new Option(`${r.groove || r.id} (${who}, ${r.hits} hits)`, r.id);
+    const who = r.driver === "teacher" ? "teacher" : r.alpha > 0 ? `guided α ${r.alpha}` : "fly on its own";
+    return new Option(`${r.groove || r.id} (${who}${r.brain ? ", brain" : ""}, ${r.hits} hits)`, r.id);
   }));
   const id = u.searchParams.get("run") || index[0].id;
   await loadRun(id);
@@ -656,6 +683,6 @@ main().catch(showError);
 
 // exposed for tests (Playwright) and the console
 window.flyDrums = {
-  get run() { return run; }, get kit() { return kit; }, clock, seek, play, pause: stopPlayback, setSpeed, setView, nowS,
+  get run() { return run; }, get kit() { return kit; }, get brain() { return brain; }, clock, seek, play, pause: stopPlayback, setSpeed, setView, nowS,
   midi, scheduleMidi, resetMidi, fps, get view() { return currentView; }, camera, controls,
 };

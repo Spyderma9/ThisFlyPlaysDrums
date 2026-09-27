@@ -1,1 +1,2 @@
 three.js 0.186.1 (MIT), from the npm package: build/three.module.js, build/three.core.js, examples/jsm/controls/OrbitControls.js
+postprocessing/*, shaders/* (bloom) added from the same npm package

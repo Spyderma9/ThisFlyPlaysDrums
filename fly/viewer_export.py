@@ -15,6 +15,12 @@ Writes (all little-endian; units cm, z up, quaternions w x y z, as in MuJoCo):
   runs/<id>/scene.json   fly.scene.kit_scene() + touching: {pad: [[start, end), ...] sim ms}
   runs/viewer_index.json every exported run, for the viewer's run picker
 hits.json and meta.json stay as fly.loop wrote them.
+
+The brain (runs recorded with --spikes):
+  runs/model/neurons.bin + neurons.json   once: float32 [N, 3] soma xyz in um (NaN where MaleCNS has no soma
+      position; row i is neuron i of the simulation), then uint8 [N] group codes (GROUPS, listed in neurons.json)
+  runs/<id>/spikes.bin   uint32 offsets [steps + 1], then uint32 neuron ids: sim step t fired ids[offsets[t]:offsets[t+1]]
+  runs/<id>/brain.json   {bin_ms, bins: {group code: spikes per bin}} for the panel's meters and sparklines
 """
 
 from __future__ import annotations
@@ -25,7 +31,108 @@ from pathlib import Path
 
 import numpy as np
 
-FRAME_T0_MS = 1  # poses.npz row k is the pose after sim step k, i.e. at sim time k + 1 ms
+FRAME_T0_MS = 1
+VOXEL_UM = 0.008  # MaleCNS voxels are 8 nm
+
+
+def _groups() -> dict[int, dict]:
+    from fly.drums import LEGS, VOICES
+
+    g = {0: {"name": "other", "kind": "region"}, 1: {"name": "optic lobe", "kind": "region"},
+         2: {"name": "central brain", "kind": "region"}, 3: {"name": "nerve cord", "kind": "region"},
+         30: {"name": "descending", "kind": "descending"},
+         31: {"name": "descending, learning", "kind": "descending"}}  # receives trainable cue -> DN synapses
+    for k, v in enumerate(VOICES):
+        g[10 + k] = {"name": f"hearing: {v.name}", "kind": "hearing", "voice": v.name}
+    for k, leg in enumerate(LEGS):
+        g[40 + k] = {"name": f"leg motor: {leg.replace('_', ' ')}", "kind": "motor", "leg": leg}
+    return g
+
+
+GROUPS = _groups()
+_CODE = {g.get("voice") or g.get("leg") or g["name"]: c for c, g in GROUPS.items()}
+
+
+def neuron_groups(superclass: np.ndarray, cue_groups: dict, dn_plastic: np.ndarray, leg_mns: dict) -> np.ndarray:
+    """uint8 GROUPS code per neuron: its region, unless it is a hearing (cue), descending or leg motor neuron."""
+    sc = np.asarray(superclass, dtype=object).astype(str)
+    codes = np.zeros(len(sc), dtype=np.uint8)
+    codes[np.char.startswith(sc, "ol_") | np.char.startswith(sc, "visual_")] = _CODE["optic lobe"]
+    codes[np.char.startswith(sc, "cb_")] = _CODE["central brain"]
+    codes[np.char.startswith(sc, "vnc_") | np.char.startswith(sc, "ascending") | np.char.startswith(sc, "sensory_asc")] \
+        = _CODE["nerve cord"]
+    codes[np.char.startswith(sc, "descending")] = _CODE["descending"]
+    codes[np.asarray(dn_plastic, dtype=np.int64)] = _CODE["descending, learning"]
+    for leg, idx in leg_mns.items():
+        codes[np.asarray(idx, dtype=np.int64)] = _CODE[leg]
+    for voice, idx in cue_groups.items():
+        codes[np.asarray(idx, dtype=np.int64)] = _CODE[voice]
+    return codes
+
+
+def place_by_targets(xyz: np.ndarray, pre: np.ndarray, post: np.ndarray, weight: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """A copy of xyz where each neuron in idx without a soma position sits at the |weight|-weighted centre of the
+    positioned neurons it synapses onto. Johnston's organ (hearing) neurons need this: their cell bodies are in the
+    antennae, outside the scanned CNS. Neurons with no positioned target stay NaN (not drawn)."""
+    out = xyz.copy()
+    todo = np.asarray(idx)[np.isnan(xyz[idx]).any(axis=1)]
+    if not len(todo):
+        return out
+    has_pos = ~np.isnan(xyz).any(axis=1)
+    keep = np.isin(pre, todo) & has_pos[post]
+    p, q, w = pre[keep], post[keep], np.abs(weight[keep]).astype(np.float64)
+    total = np.bincount(p, weights=w, minlength=len(xyz))
+    for k in range(3):
+        s = np.bincount(p, weights=w * xyz[q, k], minlength=len(xyz))
+        placed = todo[total[todo] > 0]
+        out[placed, k] = s[placed] / total[placed]
+    return out
+
+
+def export_neurons(out_dir: Path, wiring=None) -> dict:
+    """runs/model/neurons.bin + neurons.json from the wiring every run uses (fly.wiring.wire)."""
+    from fly.wiring import wire
+
+    w = wiring or wire()
+    n = w.conn.neurons
+    xyz = n[["x", "y", "z"]].to_numpy(dtype=np.float64) * VOXEL_UM
+    hearing = np.concatenate(list(w.cue_groups.values()))
+    xyz = place_by_targets(xyz, w.conn.pre, w.conn.post, w.conn.weight, hearing)
+    dn_plastic = np.unique(w.conn.post[w.plastic_mask])
+    codes = neuron_groups(n["superclass"].to_numpy(), w.cue_groups, dn_plastic, w.leg_mns)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "neurons.bin").write_bytes(xyz.astype("<f4").tobytes() + codes.tobytes())
+    ok = ~np.isnan(xyz).any(axis=1)
+    info = {
+        "count": int(len(n)), "positioned": int(ok.sum()), "units": "um", "axes": "MaleCNS voxel axes x y z, times 0.008",
+        "min": np.nanmin(xyz, axis=0).round(2).tolist(), "max": np.nanmax(xyz, axis=0).round(2).tolist(),
+        "groups": {str(c): {**g, "count": int((codes == c).sum())} for c, g in GROUPS.items()},
+        "connectome": w.conn.name,
+        "placed_by_targets": "hearing groups: Johnston's organ cell bodies are in the antennae, outside the scanned "
+                             "CNS, so each is drawn at the synapse-weighted centre of the neurons it connects to",
+    }
+    (out_dir / "neurons.json").write_text(json.dumps(info, indent=1))
+    return info
+
+
+def export_spikes(run: Path, codes: np.ndarray, bin_ms: int = 5) -> dict:
+    """spikes.npz -> spikes.bin (offsets then ids, uint32) and brain.json (spikes per group per bin_ms)."""
+    from fly.loop import load_spikes
+
+    run = Path(run)
+    s = load_spikes(run)
+    offsets, ids = s["offsets"].astype("<u4"), s["ids"].astype("<u4")
+    (run / "spikes.bin").write_bytes(offsets.tobytes() + ids.tobytes())
+    steps = len(offsets) - 1
+    step_of = np.repeat(np.arange(steps), np.diff(offsets.astype(np.int64)))
+    n_bins = -(-steps // bin_ms)
+    group = codes[ids.astype(np.int64)]
+    bins = {}
+    for c in np.unique(group):
+        bins[str(int(c))] = np.bincount(step_of[group == c] // bin_ms, minlength=n_bins).astype(int).tolist()
+    (run / "brain.json").write_text(json.dumps({"bin_ms": bin_ms, "steps": steps, "bins": bins}))
+    return {"steps": steps, "total": int(len(ids)), "offsets": int(len(offsets)), "ids": int(len(ids))}  # poses.npz row k is the pose after sim step k, i.e. at sim time k + 1 ms
 DEFAULT_RGBA = (0.5, 0.5, 0.5, 1.0)  # MuJoCo's geom default: a geom left at it shows its material's colour
 
 
@@ -126,9 +233,18 @@ def export_run(run: Path, model_dir: Path, frame_ms: int = 2, body=None) -> dict
     scene["touching"] = touching_intervals(poses["touching"], poses["pads"])
     (run / "scene.json").write_text(json.dumps(scene))
     meta = json.loads((run / "meta.json").read_text())
+    spikes = None
+    if (run / "spikes.npz").exists():
+        nb = Path(model_dir) / "neurons.bin"
+        if not nb.exists():
+            raise SystemExit(f"{run} has a brain recording: export the neurons first (--brain)")
+        n = json.loads((Path(model_dir) / "neurons.json").read_text())["count"]
+        codes = np.frombuffer(nb.read_bytes()[12 * n:], dtype=np.uint8)
+        spikes = export_spikes(run, codes)
     viewer = {"frame_ms": frame_ms, "t0_ms": FRAME_T0_MS, "n_frames": len(rows), "n_bodies": len(ids),
               "offset_ms": poses["offset_ms"], "steps": len(poses["qpos"]), "groove": meta.get("groove"),
               "driver": meta.get("driver", "fly"), "weights": meta.get("weights"), "hits": meta.get("hits"),
+              "alpha": meta.get("alpha"), "spikes": spikes, "brain_mode": meta.get("brain"),  # driving | listening
               "model": "model/fly.json"}  # relative to runs/; the viewer loads runs/model/ (--model-dir for tests)
     (run / "viewer.json").write_text(json.dumps(viewer, indent=1))
     return viewer
@@ -141,7 +257,8 @@ def update_index(runs_root: Path) -> list[dict]:
     for v in runs_root.rglob("viewer.json"):
         info = json.loads(v.read_text())
         entries.append({"id": str(v.parent.relative_to(runs_root)), "groove": Path(info.get("groove") or "").name,
-                        "driver": info.get("driver"), "hits": info.get("hits"), "mtime": v.stat().st_mtime})
+                        "driver": info.get("driver"), "alpha": info.get("alpha"), "brain": bool(info.get("spikes")),
+                        "hits": info.get("hits"), "mtime": v.stat().st_mtime})
     entries.sort(key=lambda e: -e["mtime"])
     (runs_root / "viewer_index.json").write_text(json.dumps(entries, indent=1))
     return entries
@@ -152,6 +269,7 @@ def main():
     ap.add_argument("runs", type=Path, nargs="+", help="run dirs with poses.npz (fly.loop --poses)")
     ap.add_argument("--frame-ms", type=int, default=2)
     ap.add_argument("--model-dir", type=Path, default=None, help="default: runs/model")
+    ap.add_argument("--brain", action="store_true", help="(re)build runs/model/neurons.* (needed once for brain runs)")
     args = ap.parse_args()
 
     from fly.body import Body
@@ -162,10 +280,14 @@ def main():
     body = Body()
     info = export_model(body, model_dir)
     print(f"model: {len(info['geoms'])} geoms, {len(info['bodies'])} bodies, {info['bytes'] / 1e6:.1f} MB -> {model_dir}")
+    if args.brain or (any((r / "spikes.npz").exists() for r in args.runs) and not (model_dir / "neurons.bin").exists()):
+        n = export_neurons(model_dir)
+        print(f"neurons: {n['positioned']} of {n['count']} with a position -> {model_dir / 'neurons.bin'}")
     for run in args.runs:
         v = export_run(run, model_dir, args.frame_ms, body)
         size = (run / "poses.bin").stat().st_size / 1e6
-        print(f"{run}: {v['n_frames']} frames every {args.frame_ms} ms ({size:.1f} MB)")
+        brain = f", {v['spikes']['total']} spikes ({(run / 'spikes.bin').stat().st_size / 1e6:.1f} MB)" if v["spikes"] else ""
+        print(f"{run}: {v['n_frames']} frames every {args.frame_ms} ms ({size:.1f} MB){brain}")
     print(f"index: {len(update_index(root))} runs in {root / 'viewer_index.json'}")
 
 
