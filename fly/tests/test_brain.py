@@ -67,6 +67,21 @@ def test_wide_surrogate_changes_only_the_gradient():
     assert grads[5.0] > grads[None] > 0  # the gradient reaching the trainable edge is larger
 
 
+def test_ff_credit_backprops_only_along_the_allowed_hop():
+    """cue 0 -> 1 -> (plastic) 2 -> motor 3: with credit on the hop 2 -> 3 the plastic edge 1 -> 2 still learns;
+    blocking that hop (credit only on 1 -> 3, which doesn't exist) leaves it no gradient. Forward is unchanged."""
+    conn, _ = _chain()
+    mask = np.array([False, True, False])
+    out = {}
+    for name, ff in (("full", None), ("hop", (np.array([2]), np.array([3]))), ("blocked", (np.array([1]), np.array([3])))):
+        brain = Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu", ff_credit=ff)
+        spikes = _run(brain, 60)
+        spikes[:, 0, 3].sum().backward()
+        out[name] = (spikes.detach(), float(brain.plastic.weight.grad.abs().sum()))
+    assert torch.equal(out["full"][0], out["hop"][0]) and torch.equal(out["full"][0], out["blocked"][0])
+    assert out["hop"][1] > 0 and out["blocked"][1] == 0
+
+
 def test_zero_tone_changes_nothing_and_is_trainable():
     conn, mask = _chain()
     plain = Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu")

@@ -10,7 +10,8 @@ from fly.brain import FLYBRAIN_CODE, Brain  # noqa: E402
 from fly.connectome import Connectome  # noqa: E402
 from fly.decoder import JOINTS, KIT, Decoder  # noqa: E402
 from fly.drums import LEGS  # noqa: E402
-from fly.train import GAP_MS, Loss, Take, alpha_at, detach, keep_signs, load_weights, pack, run_window, save  # noqa: E402
+from fly.train import (GAP_MS, Loss, Take, alpha_at, detach, keep_signs, load_weights, pack, run_window, save,  # noqa: E402
+                       take_paths)
 
 KIT_DATA = json.loads(KIT.read_text())
 TYPES = ["Ti flexor MN", "Ti flexor MN", "Ti extensor MN", "Fe reductor MN", "MNhl59", "?"]
@@ -36,6 +37,13 @@ def test_alpha_anneals_then_stays_zero():
     assert alpha_at(0, 100, 0.5) == 1.0
     assert alpha_at(25, 100, 0.5) == pytest.approx(0.5)
     assert alpha_at(50, 100, 0.5) == 0.0 and alpha_at(99, 100, 0.5) == 0.0
+
+
+def test_take_paths_accepts_several_globs(tmp_path):
+    for name in ("SD_90.mid", "BD_112.mid", "T1_88.mid"):
+        (tmp_path / name).touch()
+    got = take_paths(f"{tmp_path}/SD_*.mid, {tmp_path}/BD_*.mid,{tmp_path}/SD_9*.mid")
+    assert [p.replace("\\", "/").rsplit("/", 1)[1] for p in got] == ["BD_112.mid", "SD_90.mid"]
 
 
 def test_keep_signs_and_detach():

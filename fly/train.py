@@ -106,6 +106,11 @@ def pack(takes: list[Take], batch: int, rest: np.ndarray, rng: np.random.Generat
     return rates, q
 
 
+def take_paths(pattern: str) -> list[str]:
+    """Every file matching the glob, or any of several comma-separated globs (glob itself has no {a,b})."""
+    return sorted({p for pat in pattern.split(",") for p in glob(pat.strip())})
+
+
 def alpha_at(update: int, total: int, anneal: float) -> float:
     return max(0.0, 1.0 - update / max(1.0, anneal * total))
 
@@ -201,7 +206,7 @@ def save(path: Path, brain, settings: dict, **extra) -> None:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--takes", default="grooves/train/*.mid")
+    ap.add_argument("--takes", default="grooves/train/*.mid", help="glob, or several separated by commas")
     ap.add_argument("--epochs", type=int, default=6)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--window-ms", type=int, default=150)
@@ -216,6 +221,8 @@ def main():
     ap.add_argument("--plastic", default="cue_dn", choices=("cue_dn", "cue_dn+dn_mn"), help="which synapses learn")
     ap.add_argument("--mn-tone", action="store_true", help="also learn a constant excitability per leg motor neuron")
     ap.add_argument("--grad-clip", type=float, default=None, help="clip the gradient norm to this")
+    ap.add_argument("--ff-credit", action="store_true",
+                    help="backprop one hop only (leg MNs -> DNs); full BPTT through the connectome's loops explodes")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--device", default=None)
@@ -227,17 +234,18 @@ def main():
     from fly.strokes import PREROLL_MS, STROKES
     from fly.wiring import wire
 
-    takes_paths = sorted(glob(args.takes))
+    takes_paths = take_paths(args.takes)
     held_out = [p for p in takes_paths if "heldout" in Path(p).parts]
     if held_out or not takes_paths:
         raise SystemExit(f"never train on held-out grooves: {held_out}" if held_out else f"no takes match {args.takes}")
     lookahead = default_lookahead_ms()
     settings = {"shuffle_seed": args.shuffled, "lookahead_ms": lookahead, "burst_ms": BURST_MS, "preroll_ms": PREROLL_MS,
-                "rest_on_pedal": True, "plastic": args.plastic, "surrogate_mv": args.surrogate_mv}
+                "rest_on_pedal": True, "plastic": args.plastic, "surrogate_mv": args.surrogate_mv, "ff_credit": args.ff_credit}
 
     t0 = perf_counter()
     wiring = wire(shuffle_seed=args.shuffled, plastic=args.plastic)
-    brain = wiring.brain(batch=args.batch, device=device, surrogate_mv=args.surrogate_mv, tone=args.mn_tone)
+    brain = wiring.brain(batch=args.batch, device=device, surrogate_mv=args.surrogate_mv, tone=args.mn_tone,
+                         ff_credit=args.ff_credit)
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
     if args.init is not None:
         load_weights(brain, args.init, args.shuffled, args.plastic)
@@ -292,7 +300,8 @@ def main():
 
     print(f"{total} updates ({per_epoch} per epoch of {steps_per_epoch / 1000:.0f} s x {args.batch} streams), "
           f"{args.window_ms} ms windows, lr {args.lr}, alpha 1 -> 0 over {args.anneal:.0%}, "
-          f"surrogate {args.surrogate_mv or 1} mV, plastic {args.plastic}", flush=True)
+          f"surrogate {args.surrogate_mv or 1} mV, plastic {args.plastic}{', ff credit' if args.ff_credit else ''}"
+          f"{', MN tone' if args.mn_tone else ''}", flush=True)
     best = check(0, 0, math.inf)
     update, t_train = 0, perf_counter()
     for epoch in range(1, args.epochs + 1):

@@ -37,12 +37,15 @@ class Wiring:
     plastic: str = "cue_dn"
     plastic_counts: dict = field(default_factory=dict)
 
-    def brain(self, batch: int = 1, device: str = "cuda", surrogate_mv: float | None = None, tone: bool = False):
+    def brain(self, batch: int = 1, device: str = "cuda", surrogate_mv: float | None = None, tone: bool = False,
+              ff_credit: bool = False):
+        """ff_credit: backprop only one hop, leg motor neurons -> descending neurons (training; forward unchanged)."""
         from fly.brain import Brain
 
-        tone_idx = np.concatenate(list(self.leg_mns.values())) if tone else None
-        return Brain(self.conn, self.cue_groups, self.plastic_mask, batch=batch, device=device,
-                     surrogate_mv=surrogate_mv, tone_idx=tone_idx)
+        mns = np.concatenate(list(self.leg_mns.values()))
+        dns = np.flatnonzero((self.conn.neurons["superclass"] == DESCENDING).to_numpy())
+        return Brain(self.conn, self.cue_groups, self.plastic_mask, batch=batch, device=device, surrogate_mv=surrogate_mv,
+                     tone_idx=mns if tone else None, ff_credit=(dns, mns) if ff_credit else None)
 
     def summary(self) -> dict:
         return {

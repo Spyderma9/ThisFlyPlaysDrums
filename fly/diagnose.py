@@ -22,14 +22,13 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
-from glob import glob
 from pathlib import Path
 from time import perf_counter
 
 import numpy as np
 import torch
 
-from fly.train import VAL_SEED, Loss, detach, load_take, pack, rest_on_pedal, run_window, validate
+from fly.train import VAL_SEED, Loss, detach, load_take, pack, rest_on_pedal, run_window, take_paths, validate
 
 
 def _warm(brain, decoder, rates, starts, seeds, device):
@@ -145,6 +144,8 @@ def main():
     ap.add_argument("--windows", type=int, default=4, help="windows per seed, spread over the first seconds")
     ap.add_argument("--surrogates", default="1,3,7", help="surrogate widths in mV (1 = fly-brain's)")
     ap.add_argument("--plastic", default="cue_dn,cue_dn+dn_mn")
+    ap.add_argument("--credit", default="ff", help="'full' (BPTT through every loop), 'ff' (one hop MN -> DN), or both")
+    ap.add_argument("--tones", default="-3,-2,-1,-0.5,0.5", help="uniform leg-MN tone values (mV/step) for the tone scan")
     ap.add_argument("--long-window-ms", type=int, default=300, help="also test this window (C3) at the middle surrogate")
     ap.add_argument("--no-val", action="store_true", help="skip the full validations (C2 zeroed weights, C5 seed noise)")
     ap.add_argument("--val-ms", type=int, default=10_000)
@@ -167,7 +168,7 @@ def main():
     rest_on_pedal(decoder, strokes)
     loss_fn = Loss(decoder)
     rest = decoder.rest.cpu().numpy()
-    takes = [load_take(p, strokes, rest, default_lookahead_ms(), BURST_MS, PREROLL_MS) for p in sorted(glob(args.takes))]
+    takes = [load_take(p, strokes, rest, default_lookahead_ms(), BURST_MS, PREROLL_MS) for p in take_paths(args.takes)]
     rates_np, q_np = pack(takes, args.batch, rest, np.random.default_rng(VAL_SEED))
     n = min(rates_np.shape[1], max(args.val_ms, 4000))
     rates = torch.as_tensor(rates_np[:, :n], device=device)
@@ -209,13 +210,26 @@ def main():
     print(f"C2: cue->DN weights all zero: {report['zeroed_cue_dn_windows']:.5f}", flush=True)
     del brain0
 
+    # tone scan: can quieting (or exciting) every leg motor neuron move the solo loss toward hold-still?
+    brain_t = base_wiring.brain(batch=args.batch, device=device, tone=True)
+    report["tone_scan"] = {}
+    for tone in [float(x) for x in args.tones.split(",")]:
+        with torch.no_grad():
+            brain_t.tone.fill_(tone)
+        report["tone_scan"][tone] = _solo_loss(brain_t, decoder, loss_fn, rates, qstar, warm, window, device)
+    print("tone scan (uniform leg-MN tone -> solo loss): "
+          + "  ".join(f"{k:+g}: {v:.5f}" for k, v in report["tone_scan"].items()), flush=True)
+    del brain_t
+
     # C1 / C3 / C4 / C6: gradient stats and a line search per config
-    configs = [(p, wdt, window) for p in plastics for wdt in widths]
-    configs.append((plastics[0], widths[len(widths) // 2], args.long_window_ms))
-    for plastic, width, win in configs:
+    credits = args.credit.split(",")
+    configs = [(p, wdt, window, c) for c in credits for p in plastics for wdt in widths]
+    configs.append((plastics[-1], widths[len(widths) // 2], args.long_window_ms, credits[-1]))
+    for plastic, width, win, credit in configs:
         t = perf_counter()
         wiring = base_wiring if plastic == "cue_dn" else wire(conn, plastic=plastic)
-        brain = wiring.brain(batch=args.batch, device=device, surrogate_mv=None if width == 1 else width)
+        brain = wiring.brain(batch=args.batch, device=device, surrogate_mv=None if width == 1 else width,
+                             ff_credit=credit == "ff")
         classes = {}
         if plastic != "cue_dn":  # which plastic edges belong to which class, in PlasticEdges order
             pre, post = wiring.conn.pre[wiring.plastic_mask], wiring.conn.post[wiring.plastic_mask]
@@ -227,10 +241,10 @@ def main():
         stats = _grad_stats(g, classes)
         direction = torch.stack(list(g.values())).mean(0)
         stats["line_search"] = _line_search(brain, decoder, loss_fn, rates, qstar, warm, win, direction, device)
-        key = f"{plastic} | surrogate {width:g} mV | window {win} ms"
+        key = f"{plastic} | {credit} | surrogate {width:g} mV | window {win} ms"
         report["configs"][key] = stats
         ls = stats["line_search"]
-        print(f"{key:<46} nonzero {stats['nonzero_frac']:.3f}  |g| {stats['grad_norm']:.2e}  "
+        print(f"{key:<52} nonzero {stats['nonzero_frac']:.3f}  |g| {stats['grad_norm']:.2e}  "
               f"seed-cos {stats['seed_cosine']:+.2f}  signal {stats['signal_frac']:.2f}  "
               f"line search {ls['base']:.5f} -> best {min(ls[str(s)] for s in (0.5, 1, 2, 4)):.5f} "
               f"({ls['best_rel_change']:+.1%})  [{perf_counter() - t:.0f} s]", flush=True)
