@@ -17,6 +17,7 @@ dependencies:
   - matplotlib
   - tqdm
   - pytest
+  - ffmpeg  # fly.clip's MP4s. The live server has it in a separate env (FFMPEG=.../envs/media/bin/ffmpeg).
   - pip
   - pip:
       - --extra-index-url https://download.pytorch.org/whl/cu126

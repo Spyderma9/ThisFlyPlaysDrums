@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1418">
+<title>Fly Drums</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/" } }
+</script>
+</head>
+<body>
+<canvas id="stage" aria-label="3D view of the fly at its drum kit. Drag to orbit, scroll to zoom, right-drag to pan."></canvas>
+
+<header class="top">
+  <div class="title">
+    <h1>Fly Drums</h1>
+    <label class="run">
+      <span class="visually-hidden">Recorded run</span>
+      <select id="run-picker"></select>
+    </label>
+    <p id="run-info" class="run-info"></p>
+  </div>
+  <div class="kit">
+    <button id="midi-connect" type="button">Connect kit</button>
+    <label id="midi-pick" class="midi-pick" hidden>
+      <span>Hits go to</span>
+      <select id="midi-output"></select>
+    </label>
+    <p id="midi-status" class="midi-status" role="status"></p>
+  </div>
+</header>
+
+<ol id="recent" class="recent" aria-live="off"></ol>
+
+<nav class="views" aria-label="Camera">
+  <button type="button" data-view="front">Front</button>
+  <button type="button" data-view="side">Side</button>
+  <button type="button" data-view="three_quarter">Three-quarter</button>
+  <button type="button" data-view="top">Top</button>
+  <button type="button" data-view="behind">Behind</button>
+  <button type="button" data-view="free">Free camera</button>
+  <p id="free-hint" class="free-hint" hidden>Drag to turn<br>Scroll to zoom<br>Right-drag to move</p>
+  <button type="button" id="orbit" aria-pressed="false">Auto-orbit</button>
+</nav>
+
+<footer class="deck">
+  <div class="transport">
+    <button id="play" type="button" aria-label="Play">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="M7 4.5v15l12.5-7.5z"/></svg>
+    </button>
+    <p class="clock"><span id="now">0.00</span><span class="of"> / <span id="total">0.00</span> s</span></p>
+    <div class="speed" role="radiogroup" aria-label="Playback speed">
+      <button type="button" role="radio" data-speed="1" aria-label="Real time" aria-checked="true">1×</button>
+      <button type="button" role="radio" data-speed="0.5" aria-label="Half speed" aria-checked="false">½×</button>
+      <button type="button" role="radio" data-speed="0.25" aria-label="Quarter speed" aria-checked="false">¼×</button>
+      <button type="button" role="radio" data-speed="0.1" aria-label="Tenth speed" aria-checked="false">⅒×</button>
+    </div>
+  </div>
+  <div id="lanes" class="lanes" role="slider" tabindex="0" aria-label="Timeline: each row is a drum, each mark a hit"
+       aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0.00 seconds">
+    <canvas id="lanes-canvas"></canvas>
+  </div>
+</footer>
+
+<div id="loading" class="loading" role="status">Loading the fly…</div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
