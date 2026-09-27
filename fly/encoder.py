@@ -70,6 +70,15 @@ def encode_onsets(
     return Encoded(rates, VOICE_NAMES, dt_ms, offset_ms)
 
 
+MAX_RATE_HZ = 1000.0  # one spike per ms: the Poisson generator's ceiling at dt = 1 ms
+
+
+def scale_cues(rates: np.ndarray, gain: float) -> np.ndarray:
+    """Every cue rate times `gain` (capped at MAX_RATE_HZ): one fixed rule for every drum, stronger drive into the brain.
+    A fly trained with a gain records it (checkpoint "cue_gain") and fly.loop plays it with the same one."""
+    return rates if gain == 1 else np.minimum(rates * gain, MAX_RATE_HZ).astype(rates.dtype)
+
+
 def encode(midi_path: Path, lookahead_ms: float = 150.0, dt_ms: float = 1.0, **kwargs) -> Encoded:
     """Cue rate envelopes for a whole MIDI file."""
     return encode_onsets(read_onsets(midi_path), lookahead_ms=lookahead_ms, dt_ms=dt_ms, **kwargs)

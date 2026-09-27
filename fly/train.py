@@ -130,10 +130,14 @@ class Loss:
         self.rest, self.span = decoder.rest, decoder.up + decoder.down
         self.driven = (decoder.eff.abs().sum(1) > 0).float()
 
-    def __call__(self, q: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def per_servo(self, q: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """[B, 32] weighted squared error per servo (0 on servos the decoder can't drive)."""
         err = ((q - target) / self.span) ** 2
         w = 1.0 + ACTIVE_W * (((target - self.rest).abs() / self.span) > ACTIVE_FRAC).float()
-        return (err * w * self.driven).sum() / (self.driven.sum() * q.shape[0])
+        return err * w * self.driven
+
+    def __call__(self, q: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.per_servo(q, target).sum() / (self.driven.sum() * q.shape[0])
 
 
 def run_window(brain, decoder, loss_fn, state, r, rates: torch.Tensor, qstar: torch.Tensor, alpha: float, gen):

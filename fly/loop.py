@@ -287,6 +287,8 @@ def main():
     ap.add_argument("--poses", action="store_true", help="also write poses.npz (fly.clip, fly.viewer_export)")
     ap.add_argument("--teacher", action="store_true", help="play the teacher's q* into the body instead of the fly")
     ap.add_argument("--spikes", action="store_true", help="also write spikes.npz, which neurons fired each ms (viewer)")
+    ap.add_argument("--cue-gain", type=float, default=None,
+                    help="scale every cue rate (default: the checkpoint's cue_gain, else 1; untrained runs set it here)")
     args = ap.parse_args()
     if args.teacher and not args.spikes:  # no brain wanted: the fast CPU path
         _, meta = teacher_run(args.groove, args.out, args.seconds, args.poses, args.lookahead_ms, args.preroll_ms)
@@ -299,7 +301,7 @@ def main():
 
     from fly.body import Body
     from fly.decoder import Decoder
-    from fly.encoder import encode
+    from fly.encoder import encode, scale_cues
     from fly.strokes import PREROLL_MS
 
     lookahead = args.lookahead_ms if args.lookahead_ms is not None else default_lookahead_ms()
@@ -311,6 +313,8 @@ def main():
     if args.seconds is not None:
         rates = rates[: int((args.seconds * 1000 + enc.offset_ms) / enc.dt_ms)]
     wiring, brain, ck = _brain_for(args.weights, args.shuffled, device)
+    cue_gain = args.cue_gain if args.cue_gain is not None else (ck or {}).get("cue_gain", 1.0)  # as it was trained
+    rates = scale_cues(rates, cue_gain)
     timings["wiring_s"] = perf_counter() - t0
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
     from fly.strokes import STROKES
@@ -350,7 +354,7 @@ def main():
     meta = {
         "groove": _groove_name(args.groove), "driver": "teacher" if args.teacher else "fly",
         "brain": "listening" if args.teacher else "driving",
-        "alpha": args.alpha, "seed": args.seed, "shuffled": args.shuffled, "device": device,
+        "alpha": args.alpha, "seed": args.seed, "shuffled": args.shuffled, "device": device, "cue_gain": cue_gain,
         "weights": None if args.weights is None else str(args.weights), "rest_on_pedal": on_pedal,
         "offset_ms": enc.offset_ms, "lookahead_ms": lookahead, "preroll_ms": preroll, "burst_ms": args.burst_ms,
         "steps": len(rates), "seconds": args.seconds,
