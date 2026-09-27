@@ -104,6 +104,7 @@ class Panel:
             mujoco.mjv_initGeom(g, self.types[k], np.asarray(p["size"], dtype=float), st["pos"][k], mat,
                                 st["rgba"][k].astype(np.float32))
             g.specular, g.shininess, g.reflectance = 0.6 * p["shine"], p["shine"], 0.0
+            g.emission = 0.6 * st["glow"][k]  # the viewer's emissive flash
             scn.ngeom += 1
         img = Image.fromarray(self.r.render())
         draw = ImageDraw.Draw(img)

@@ -31,7 +31,7 @@ PEDAL = (0.30, 0.31, 0.33, 1.0)
 FELT = (0.88, 0.87, 0.82, 1.0)
 FLOOR = (0.11, 0.09, 0.10, 1.0)
 VOICE_COLORS = {"snare": "#e63946", "hat": "#f4c430", "crash": "#f77f00", "tom1": "#4361ee", "tom2": "#7b2cbf",
-                "tom3": "#2a9d8f", "ride": "#52b788", "kick": "#ff6b6b", "hat_pedal": "#f4c430"}
+                "tom3": "#2a9d8f", "ride": "#52b788", "kick": "#6ee7f2", "hat_pedal": "#f4c430"}
 
 # sizes, cm (pads are 0.03-0.044 wide; the fly is ~0.25 long)
 SKIN = 0.0004  # half-thickness of a drum head
@@ -241,13 +241,14 @@ def _eased(touching: np.ndarray, t: int, col: int, ease_ms: float) -> float:
 
 
 def frame_state(scene: dict, t_ms: float, hits: list[tuple[float, str, int]], touching: np.ndarray) -> dict:
-    """Pose and colour of every primitive at sim time t_ms.
-    hits: (sim t_ms, pad, velocity), any order. touching: [T, pads] contact state per sim ms (loop.Recorder)."""
+    """Pose, colour and glow (0..1, light it gives off; a bronze cymbal flashing yellow needs it to show) of every
+    primitive at sim time t_ms. hits: (sim t_ms, pad, velocity), any order. touching: [T, pads] per sim ms."""
     a = scene["anim"]
     prims = scene["prims"]
     rgba = np.array([p["rgba"] for p in prims], dtype=float)
     pos = np.array([p["pos"] for p in prims], dtype=float)
     quat = np.array([p["quat"] for p in prims], dtype=float)
+    glow = np.zeros(len(prims))
     last: dict[str, tuple[float, int]] = {}
     for t, pad, vel in hits:
         if t <= t_ms and (pad not in last or t >= last[pad][0]):
@@ -264,6 +265,7 @@ def frame_state(scene: dict, t_ms: float, hits: list[tuple[float, str, int]], to
             target = np.array(_hex(scene["voice_colors"][p["pad"]]))
             target[:3] = 0.65 * target[:3] + 0.35
             rgba[i] = rgba[i] + amount * (target - rgba[i])
+            glow[i] = amount
         angle = 0.0
         if p["anim"] == "cymbal" and np.isfinite(dt):
             angle = np.radians(a["wobble_deg"]) * hit[1] / 127 * np.exp(-dt / a["wobble_tau_ms"]) \
@@ -277,4 +279,4 @@ def frame_state(scene: dict, t_ms: float, hits: list[tuple[float, str, int]], to
             pivot = np.asarray(p["pivot"])
             pos[i] = pivot + rotate(r, pos[i] - pivot)
             quat[i] = quat_mul(r, quat[i])
-    return {"rgba": rgba, "pos": pos, "quat": quat}
+    return {"rgba": rgba, "pos": pos, "quat": quat, "glow": glow}

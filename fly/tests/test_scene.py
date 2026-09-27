@@ -75,6 +75,14 @@ def test_a_hit_flashes_its_drum_then_fades(scene):
     assert np.allclose(_state(scene, 400, hit)["rgba"][i], base[i])  # faded
 
 
+def test_a_hit_glows_so_bronze_on_yellow_still_shows(scene):
+    (i, _), = _prims(scene, "hat", "strike")
+    hit = [(100.0, "hat", 100)]
+    assert _state(scene, 90, hit)["glow"][i] == 0
+    assert _state(scene, 110, hit)["glow"][i] > 0.3
+    assert _state(scene, 400, hit)["glow"][i] == 0
+
+
 def test_louder_hits_flash_brighter(scene):
     (i, _), = _prims(scene, "snare", "strike")
     base = _state(scene, 500)["rgba"][i]
