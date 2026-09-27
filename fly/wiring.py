@@ -22,7 +22,9 @@ from fly.probe import LEGS as LEG_NERVES, _side
 
 CUES = Path(__file__).with_name("cues.json")
 DESCENDING = "descending_neuron"
-PLASTIC = ("cue_dn", "cue_dn+dn_mn")  # trainable sets: D3's cue -> DN, optionally plus DN -> leg motor neurons
+# trainable sets: D3's cue -> DN, optionally plus DN -> leg motor neurons; or every synapse onto a playing-leg motor
+# neuron (mn_in: premotor interneurons, DNs, ...), the MNs' whole synaptic input
+PLASTIC = ("cue_dn", "cue_dn+dn_mn", "mn_in")
 
 
 @dataclass
@@ -94,7 +96,10 @@ def wire(conn: Connectome | None = None, shuffle_seed: int | None = None, cues_p
     mns, types = leg_motor_neurons(conn.neurons)
     is_mn = np.zeros(conn.size, dtype=bool)
     is_mn[np.concatenate(list(mns.values()))] = True
-    classes = {"cue_dn": is_cue[conn.pre] & is_dn[conn.post]}  # D3
+    if plastic == "mn_in":  # every synapse onto a playing-leg motor neuron, whatever sends it
+        classes = {"mn_in": is_mn[conn.post]}
+    else:
+        classes = {"cue_dn": is_cue[conn.pre] & is_dn[conn.post]}  # D3
     if plastic == "cue_dn+dn_mn":  # also descending -> playing-leg motor neurons: which legs and joints each DN drives
         classes["dn_mn"] = is_dn[conn.pre] & is_mn[conn.post]
     mask = np.logical_or.reduce(list(classes.values()))

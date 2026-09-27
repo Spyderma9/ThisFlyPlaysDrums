@@ -212,6 +212,8 @@ def save(path: Path, brain, settings: dict, **extra) -> None:
 
 
 def main():
+    from fly.wiring import PLASTIC
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--takes", default="grooves/train/*.mid", help="glob, or several separated by commas")
@@ -226,7 +228,7 @@ def main():
     ap.add_argument("--init", type=Path, default=None, help="start from these weights (resume)")
     ap.add_argument("--surrogate-mv", type=float, default=None,
                     help="widen the surrogate gradient to this many mV (backward pass only; default: fly-brain's 1 mV)")
-    ap.add_argument("--plastic", default="cue_dn", choices=("cue_dn", "cue_dn+dn_mn"), help="which synapses learn")
+    ap.add_argument("--plastic", default="cue_dn", choices=PLASTIC, help="which synapses learn")
     ap.add_argument("--mn-tone", action="store_true", help="also learn a constant excitability per leg motor neuron")
     ap.add_argument("--grad-clip", type=float, default=None, help="clip the gradient norm to this")
     ap.add_argument("--ff-credit", action="store_true",
