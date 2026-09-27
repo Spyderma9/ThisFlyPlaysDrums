@@ -18,11 +18,59 @@
   <header class="top">
     <div class="title">
       <h1>Fly Drums</h1>
-      <label class="run">
-        <span class="visually-hidden">Recorded run</span>
-        <select id="run-picker"></select>
-      </label>
+      <div class="run-row">
+        <label class="run">
+          <span class="visually-hidden">Recorded run</span>
+          <select id="run-picker"></select>
+        </label>
+        <button type="button" id="song-open" class="song-open" aria-expanded="false" aria-controls="song" hidden>New song</button>
+      </div>
       <p id="run-info" class="run-info"></p>
+      <section id="song" class="song" aria-labelledby="song-title" hidden>
+        <header class="song-head">
+          <h2 id="song-title">New song</h2>
+          <button type="button" class="song-close" aria-label="Close">×</button>
+        </header>
+
+        <div class="song-pick">
+          <label class="song-drop">
+            <input type="file" class="visually-hidden song-file" accept=".musicxml,.xml,.mxl,.mscz,.mid,.midi,.txt">
+            <strong>Drop sheet music here</strong>
+            <span>or click to choose a file: MusicXML, MuseScore, MIDI or a text grid</span>
+          </label>
+          <button type="button" class="song-record"><i aria-hidden="true"></i>Play it on the kit</button>
+          <label class="song-len">The fly plays the first
+            <input type="number" class="song-seconds" min="2" max="120" step="1" value="20" inputmode="numeric"> s
+          </label>
+          <p class="song-note">Each second of music takes the fly about 15 seconds to play.</p>
+        </div>
+
+        <div class="song-rec" hidden>
+          <p class="song-rec-live"><i aria-hidden="true"></i><span class="song-rec-count">Listening to the kit</span></p>
+          <p class="song-note">Play your groove. Recording stops when you stop for 2.5 seconds.</p>
+          <div class="song-actions">
+            <button type="button" class="song-rec-done">Done</button>
+            <button type="button" class="song-rec-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <div class="song-run" hidden>
+          <p class="song-name"></p>
+          <canvas class="song-strip" aria-hidden="true"></canvas>
+          <p class="song-msg" role="status"></p>
+          <div class="song-ask" hidden>
+            <p class="song-ask-text"></p>
+            <div class="song-actions">
+              <button type="button" class="song-go">Run it anyway</button>
+              <button type="button" class="song-nogo">Don't run it</button>
+            </div>
+          </div>
+          <p class="song-result"></p>
+          <button type="button" class="song-again" hidden>Add another song</button>
+        </div>
+
+        <p class="song-error" role="alert"></p>
+      </section>
     </div>
     <div class="cams">
       <nav class="views" aria-label="Camera">
@@ -39,6 +87,7 @@
   </header>
 
   <ol id="recent" class="recent" aria-live="off"></ol>
+
 
   <footer class="deck">
     <div class="transport">
