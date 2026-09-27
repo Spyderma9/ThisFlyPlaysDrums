@@ -105,6 +105,8 @@ def main():
     ap.add_argument("--tau-ms", type=float, default=20.0,
                     help="inputs and target are both filtered at this timescale before the fit (the MN membrane's "
                          "20 ms; the synapse alone, 4.5 ms, leaves each input mostly spike-timing noise)")
+    ap.add_argument("--ridge", type=float, default=1e-8,
+                    help="ridge on the normal equations, relative to their mean diagonal (raise it if the fit overfits)")
     ap.add_argument("--smooth-ms", default="0,30",
                     help="extra smoothing of inputs and target to try (ms, comma-separated); best held-out R^2 is kept")
     ap.add_argument("--fit-frac", type=float, default=0.7, help="fit on this share of the time, R^2 on the rest")
@@ -181,7 +183,7 @@ def main():
         new_w = w0_all.copy()
         new_w[onto_mn[is_leg_mn[onto_mn]]] = 0.0
         tone = np.zeros(len(mn_idx), dtype=np.float32)
-        ss_res = ss_tot = 0.0
+        ss_res = ss_tot = fit_res = fit_tot = 0.0
         for m in range(len(mn_idx)):
             positions = [p for p in by_mn.get(m, []) if not is_leg_mn[p]]
             cols = [col_of_pre[int(p_pre[p])] for p in positions]
@@ -192,14 +194,17 @@ def main():
             x_fit, y_fit = x[:, :split].reshape(n_fit, len(cols)), target[:, :split].reshape(n_fit)
             x_test, y_test = x[:, split:].reshape(n_test, len(cols)), target[:, split:].reshape(n_test)
             if positions:
-                w, tone[m] = fit_mn_gram(x_fit, y_fit, w0)
+                w, tone[m] = fit_mn_gram(x_fit, y_fit, w0, ridge=args.ridge)
                 new_w[positions] = w
             else:  # nothing synapses onto this MN: tone only
                 w, tone[m] = np.zeros(0), float(y_fit.mean())
             pred = x_test @ w + tone[m]
             ss_res += float(((y_test - pred) ** 2).sum())
             ss_tot += float(((y_test - y_fit.mean()) ** 2).sum())
-        return new_w, tone, (1 - ss_res / ss_tot if ss_tot > 0 else float("nan"))
+            fit_res += float(((y_fit - x_fit @ w - tone[m]) ** 2).sum())
+            fit_tot += float(((y_fit - y_fit.mean()) ** 2).sum())
+        r2_in = 1 - fit_res / fit_tot if fit_tot > 0 else float("nan")  # far above the held-out R^2: overfitting
+        return new_w, tone, (1 - ss_res / ss_tot if ss_tot > 0 else float("nan")), r2_in
 
     # the filter is linear, so extra smoothing of inputs and target leaves the right weights the same while cutting
     # spike-timing noise further; the smoothing with the best held-out R^2 goes on to validation
@@ -207,11 +212,13 @@ def main():
     for extra in [float(x) for x in args.smooth_ms.split(",")]:
         t2 = perf_counter()
         u_s, i_s = (u, i_star) if extra == 0 else (smooth(u, extra, args.stride), smooth(i_star, extra, args.stride))
-        new_w, tone, r2 = fits[extra] = fit_all(u_s, i_s)
+        new_w, tone, r2, r2_in = fit_all(u_s, i_s)
+        fits[extra] = (new_w, tone, r2)
         del u_s
         change = np.abs(new_w[onto_mn] - w0_all[onto_mn])
         print(f"fit (tau {args.tau_ms:g} ms + {extra:g} ms smoothing) in {perf_counter() - t2:.0f} s: R^2 of the MN "
-              f"currents on held-out time {r2:+.3f}; median |W' - W| {np.median(change):.2f}, max {change.max():.1f} "
+              f"currents on held-out time {r2:+.3f} (fit time {r2_in:+.3f}); median |W' - W| {np.median(change):.2f}, "
+              f"max {change.max():.1f} "
               f"(original median {np.median(np.abs(w0_all[onto_mn])):.1f}); {int((new_w[onto_mn] == 0).sum())} of "
               f"{len(onto_mn)} synapses at 0 ({int(is_leg_mn[onto_mn].sum())} MN -> MN); tone {tone.min():+.3f} .. "
               f"{tone.max():+.3f} mV/step", flush=True)
