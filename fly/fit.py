@@ -15,7 +15,9 @@ wScale / tauMem, i.e. 6.875e-5 mV per step per (weight x Hz). Each leg MN m gets
 
 I*(q*) is the teacher's current, what fly.train injects at alpha = 1 (training loss ~0.001 there); it is 0 at rest,
 so an MN whose whole input is I* stays silent between strokes. Non-negative least squares per MN on sign-flipped,
-centred inputs (via the k x k normal equations); the constant is the tone. The body gives the brain no feedback and
+centred inputs (via the k x k normal equations); the constant is the tone. Inputs and target are both filtered at
+--tau-ms (the MN membrane's 20 ms) first: the filter is linear, so the weights are the same ones, but at 4-10 Hz a
+5 ms synaptic trace is mostly spike-timing noise, which drives least squares towards 0 (f2: R^2 0.005, 79% at 0). The body gives the brain no feedback and
 the MNs barely feed back into it, so re-weighting the MNs' inputs leaves the recorded activity as it was: the fit is
 on the distribution the fly will play from. MN -> MN synapses are the exception (their input is what changes), so
 they are set to 0 rather than fit. The rest of the connectome, the encoder and the decoder are unchanged,
@@ -42,7 +44,7 @@ from time import perf_counter
 import numpy as np
 import torch
 
-from fly.ceiling import record
+from fly.ceiling import record, smooth
 from fly.train import VAL_SEED, Loss, hold_still, load_take, pack, rest_on_pedal, save, take_paths, validate
 
 SYN_DECAY = 0.8  # fly-brain: conductance *= 1 - dt / tauSyn (5 ms) each step
@@ -100,6 +102,11 @@ def main():
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--seconds", type=float, default=40.0, help="fit data per stream")
     ap.add_argument("--stride", type=int, default=4, help="keep every stride-th ms for the fit")
+    ap.add_argument("--tau-ms", type=float, default=20.0,
+                    help="inputs and target are both filtered at this timescale before the fit (the MN membrane's "
+                         "20 ms; the synapse alone, 4.5 ms, leaves each input mostly spike-timing noise)")
+    ap.add_argument("--smooth-ms", default="0,30",
+                    help="extra smoothing of inputs and target to try (ms, comma-separated); best held-out R^2 is kept")
     ap.add_argument("--fit-frac", type=float, default=0.7, help="fit on this share of the time, R^2 on the rest")
     ap.add_argument("--gains", default="1,1.5,2,3,5",
                     help="scales of the fit to validate (above 1 lifts stroke currents the fit shrank below threshold)")
@@ -151,52 +158,66 @@ def main():
     n = min(rates_np.shape[1], int(args.seconds * 1000))
     rates = torch.as_tensor(rates_np[:, :n], device=device)
     t1 = perf_counter()
-    tau = -1.0 / math.log(SYN_DECAY)  # record() filters with exp(-1 / tau) and reads in Hz
-    u = record(brain, rates, {"pre": pres}, tau, args.stride, args.seed)["pre"]  # [B, T', n_pre]
+    # record() reads in Hz whatever the filter; a synapse turns f Hz into this mean current per unit weight
+    u = record(brain, rates, {"pre": pres}, args.tau_ms, args.stride, args.seed)["pre"]  # [B, T', n_pre]
     u *= brain.scale / brain.params["tauMem"] / ((1 - SYN_DECAY) * 1000.0)  # -> mV/step per unit weight
     with torch.no_grad():
         q = torch.as_tensor(q_np[:, :n:args.stride][:, :u.shape[1]], device=device)
         i_star = torch.cat([lif_current(decoder.rates_for(c)) for c in q.reshape(-1, q.shape[-1]).split(8192)])
         i_star = i_star.reshape(*q.shape[:2], -1).cpu().numpy()  # [B, T', M] the teacher's current at each MN
+    i_star = smooth(i_star, args.tau_ms, args.stride)  # the same filter as the inputs; filtering commutes with W
     split = int(args.fit_frac * u.shape[1])
     print(f"recorded {n / 1000:.0f} s x {args.batch} streams ({u.nbytes / 2**30:.1f} GB) in {perf_counter() - t1:.0f} s",
           flush=True)
 
     # per MN: new input weights and tone, fit on the first part of the time, scored on the rest
-    t2 = perf_counter()
-    new_w = w0_all.copy()
-    tone = np.zeros(len(mn_idx), dtype=np.float32)
     by_mn: dict[int, list[int]] = {}
     for pos in onto_mn:
         by_mn.setdefault(col_of_mn[int(p_post[pos])], []).append(int(pos))
-    ss_res = ss_tot = 0.0
     is_leg_mn = np.isin(p_pre, mn_idx)  # MN -> MN synapses: their input changes once the fit is in, so they go to 0
-    new_w[onto_mn[is_leg_mn[onto_mn]]] = 0.0
-    for m in range(len(mn_idx)):
-        positions = [p for p in by_mn.get(m, []) if not is_leg_mn[p]]
-        cols = [col_of_pre[int(p_pre[p])] for p in positions]
-        w0 = w0_all[positions]
-        x = u[:, :, cols]  # [B, T', k]
-        target = i_star[:, :, m] + (x @ w0 if args.inputs == "dn" else 0.0)
-        n_fit, n_test = x.shape[0] * split, x.shape[0] * (x.shape[1] - split)  # explicit: k may be 0
-        x_fit, y_fit = x[:, :split].reshape(n_fit, len(cols)), target[:, :split].reshape(n_fit)
-        x_test, y_test = x[:, split:].reshape(n_test, len(cols)), target[:, split:].reshape(n_test)
-        if positions:
-            w, tone[m] = fit_mn_gram(x_fit, y_fit, w0)
-            new_w[positions] = w
-        else:  # nothing synapses onto this MN: tone only
-            w, tone[m] = np.zeros(0), float(y_fit.mean())
-        pred = x_test @ w + tone[m]
-        ss_res += float(((y_test - pred) ** 2).sum())
-        ss_tot += float(((y_test - y_fit.mean()) ** 2).sum())
-    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-    change = np.abs(new_w[onto_mn] - w0_all[onto_mn])
-    print(f"fit in {perf_counter() - t2:.0f} s: R^2 of the MN currents on held-out time {r2:+.3f}; median |W' - W| "
-          f"{np.median(change):.2f}, max {change.max():.1f} (original median {np.median(np.abs(w0_all[onto_mn])):.1f}); "
-          f"{int((new_w[onto_mn] == 0).sum())} of {len(onto_mn)} synapses at 0 ({int(is_leg_mn[onto_mn].sum())} "
-          f"MN -> MN); tone {tone.min():+.3f} .. "
-          f"{tone.max():+.3f} mV/step", flush=True)
+
+    def fit_all(u_s: np.ndarray, i_s: np.ndarray):
+        """-> (plastic weights, tone per MN, R^2 on held-out time) for inputs u_s [B, T', n_pre], currents i_s."""
+        new_w = w0_all.copy()
+        new_w[onto_mn[is_leg_mn[onto_mn]]] = 0.0
+        tone = np.zeros(len(mn_idx), dtype=np.float32)
+        ss_res = ss_tot = 0.0
+        for m in range(len(mn_idx)):
+            positions = [p for p in by_mn.get(m, []) if not is_leg_mn[p]]
+            cols = [col_of_pre[int(p_pre[p])] for p in positions]
+            w0 = w0_all[positions]
+            x = u_s[:, :, cols]  # [B, T', k]
+            target = i_s[:, :, m] + (x @ w0 if args.inputs == "dn" else 0.0)
+            n_fit, n_test = x.shape[0] * split, x.shape[0] * (x.shape[1] - split)  # explicit: k may be 0
+            x_fit, y_fit = x[:, :split].reshape(n_fit, len(cols)), target[:, :split].reshape(n_fit)
+            x_test, y_test = x[:, split:].reshape(n_test, len(cols)), target[:, split:].reshape(n_test)
+            if positions:
+                w, tone[m] = fit_mn_gram(x_fit, y_fit, w0)
+                new_w[positions] = w
+            else:  # nothing synapses onto this MN: tone only
+                w, tone[m] = np.zeros(0), float(y_fit.mean())
+            pred = x_test @ w + tone[m]
+            ss_res += float(((y_test - pred) ** 2).sum())
+            ss_tot += float(((y_test - y_fit.mean()) ** 2).sum())
+        return new_w, tone, (1 - ss_res / ss_tot if ss_tot > 0 else float("nan"))
+
+    # the filter is linear, so extra smoothing of inputs and target leaves the right weights the same while cutting
+    # spike-timing noise further; the smoothing with the best held-out R^2 goes on to validation
+    fits = {}
+    for extra in [float(x) for x in args.smooth_ms.split(",")]:
+        t2 = perf_counter()
+        u_s, i_s = (u, i_star) if extra == 0 else (smooth(u, extra, args.stride), smooth(i_star, extra, args.stride))
+        new_w, tone, r2 = fits[extra] = fit_all(u_s, i_s)
+        del u_s
+        change = np.abs(new_w[onto_mn] - w0_all[onto_mn])
+        print(f"fit (tau {args.tau_ms:g} ms + {extra:g} ms smoothing) in {perf_counter() - t2:.0f} s: R^2 of the MN "
+              f"currents on held-out time {r2:+.3f}; median |W' - W| {np.median(change):.2f}, max {change.max():.1f} "
+              f"(original median {np.median(np.abs(w0_all[onto_mn])):.1f}); {int((new_w[onto_mn] == 0).sum())} of "
+              f"{len(onto_mn)} synapses at 0 ({int(is_leg_mn[onto_mn].sum())} MN -> MN); tone {tone.min():+.3f} .. "
+              f"{tone.max():+.3f} mV/step", flush=True)
     del u
+    extra = max(fits, key=lambda k: fits[k][2])
+    new_w, tone, r2 = fits[extra]
 
     # validate each gain at alpha 0 on fly.train's validation slice
     val_rates, val_q = pack(takes, args.batch, rest, np.random.default_rng(VAL_SEED))
@@ -206,9 +227,11 @@ def main():
     hold = hold_still(decoder, loss_fn, val_q)
     settings = {"shuffle_seed": args.shuffled, "lookahead_ms": lookahead, "burst_ms": BURST_MS, "preroll_ms": PREROLL_MS,
                 "rest_on_pedal": True, "plastic": plastic, "surrogate_mv": None, "ff_credit": False,
-                "method": f"lstsq {args.inputs} inputs onto leg MNs + tone (fly.fit)"}
+                "method": f"lstsq {args.inputs} inputs onto leg MNs + tone (fly.fit), inputs and target filtered "
+                          f"{args.tau_ms:g} ms + {extra:g} ms"}
     args.out.mkdir(parents=True, exist_ok=True)
-    results = {"hold_still_val": hold, "r2_heldout_time": r2}
+    results = {"hold_still_val": hold, "r2_heldout_time": r2, "smooth_ms": extra,
+               "r2_by_smoothing": {f"{k:g}": v[2] for k, v in fits.items()}}
     best = (math.inf, None)
     for gain in [0.0] + [float(g) for g in args.gains.split(",")]:
         w = weights_at(gain, w0_all, new_w, args.inputs)
