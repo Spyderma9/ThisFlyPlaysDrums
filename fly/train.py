@@ -16,6 +16,11 @@ the first `val_ms` of a fixed packing): that loss is the number the D7 gate look
     python -m fly.train --out runs/train/smoke --max-windows 20        # a few minutes: does the loss move?
     python -m fly.train --out runs/train/t1 --epochs 6
     python -m fly.train --out runs/train/t1_shuf --epochs 6 --shuffled 1   # the control, trained the same way
+    python -m fly.train --out runs/train/t6 --surrogate-mv 5 --plastic cue_dn+dn_mn --mn-tone --window-ms 300 --batch 8
+
+--surrogate-mv widens fly-brain's surrogate gradient (backward pass only: the simulated fly is identical); --plastic
+cue_dn+dn_mn also trains descending -> leg motor-neuron synapses; --mn-tone learns one constant current per leg motor
+neuron (resting excitability, never groove-dependent). python -m fly.diagnose checks gradient health before training.
 
 Writes <out>/log.csv (every update), val.csv, meta.json, last.pt and best.pt (plastic weights + settings).
 A trained fly plays with: python -m fly.loop --groove X.mid --out runs/<id> --weights <out>/best.pt
@@ -101,6 +106,11 @@ def pack(takes: list[Take], batch: int, rest: np.ndarray, rng: np.random.Generat
     return rates, q
 
 
+def take_paths(pattern: str) -> list[str]:
+    """Every file matching the glob, or any of several comma-separated globs (glob itself has no {a,b})."""
+    return sorted({p for pat in pattern.split(",") for p in glob(pat.strip())})
+
+
 def alpha_at(update: int, total: int, anneal: float) -> float:
     return max(0.0, 1.0 - update / max(1.0, anneal * total))
 
@@ -152,25 +162,51 @@ def validate(brain, decoder, loss_fn, rates: torch.Tensor, qstar: torch.Tensor, 
     return sum(losses) / rates.shape[1]
 
 
-def load_weights(brain, path: Path, shuffle_seed: int | None) -> dict:
+def checkpoint_settings(path: Path) -> dict:
+    """What a checkpoint needs to be rebuilt: shuffle seed, plastic set, whether it has motor-neuron tone, ..."""
+    ck = torch.load(path, map_location="cpu")
+    return {k: v for k, v in ck.items() if k not in ("plastic_weight", "tone")} | {"tone": ck.get("tone") is not None}
+
+
+def load_weights(brain, path: Path, shuffle_seed: int | None, plastic: str = "cue_dn") -> dict:
     ck = torch.load(path, map_location=brain.plastic.weight.device)
     if ck["shuffle_seed"] != shuffle_seed:
         raise SystemExit(f"{path} was trained with shuffle seed {ck['shuffle_seed']}, not {shuffle_seed}")
+    if ck.get("plastic", "cue_dn") != plastic:
+        raise SystemExit(f"{path} trained the {ck.get('plastic', 'cue_dn')} synapses, this wiring has {plastic}")
     if ck["plastic_weight"].shape != brain.plastic.weight.shape:
         raise SystemExit(f"{path}: {ck['plastic_weight'].shape[0]} plastic edges, this wiring has {brain.plastic.weight.shape[0]}")
+    if (ck.get("tone") is not None) != (brain.tone is not None):
+        raise SystemExit(f"{path} {'has' if ck.get('tone') is not None else 'has no'} motor-neuron tone; build the brain to match")
     with torch.no_grad():
         brain.plastic.weight.copy_(ck["plastic_weight"])
+        if brain.tone is not None:
+            brain.tone.copy_(ck["tone"])
     return ck
 
 
+def wire_brain(weights: Path | None, shuffle_seed: int | None, device: str, batch: int = 1):
+    """-> (wiring, brain, checkpoint or None): built the way `weights` was trained (plastic set, tone), weights loaded.
+    Used by fly.loop and fly.clip; evaluation never needs the training surrogate."""
+    from fly.wiring import wire
+
+    s = checkpoint_settings(weights) if weights is not None else {}
+    plastic = s.get("plastic", "cue_dn")
+    wiring = wire(shuffle_seed=shuffle_seed, plastic=plastic)
+    brain = wiring.brain(batch=batch, device=device, tone=s.get("tone", False))
+    ck = load_weights(brain, weights, shuffle_seed, plastic) if weights is not None else None
+    return wiring, brain, ck
+
+
 def save(path: Path, brain, settings: dict, **extra) -> None:
-    torch.save({"plastic_weight": brain.plastic.weight.detach().cpu(), **settings, **extra}, path)
+    tone = None if brain.tone is None else brain.tone.detach().cpu()
+    torch.save({"plastic_weight": brain.plastic.weight.detach().cpu(), "tone": tone, **settings, **extra}, path)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--takes", default="grooves/train/*.mid")
+    ap.add_argument("--takes", default="grooves/train/*.mid", help="glob, or several separated by commas")
     ap.add_argument("--epochs", type=int, default=6)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--window-ms", type=int, default=150)
@@ -180,6 +216,13 @@ def main():
     ap.add_argument("--max-windows", type=int, default=None, help="stop after this many updates (smoke test)")
     ap.add_argument("--shuffled", type=int, default=None, metavar="SEED", help="train the shuffled-connectome control")
     ap.add_argument("--init", type=Path, default=None, help="start from these weights (resume)")
+    ap.add_argument("--surrogate-mv", type=float, default=None,
+                    help="widen the surrogate gradient to this many mV (backward pass only; default: fly-brain's 1 mV)")
+    ap.add_argument("--plastic", default="cue_dn", choices=("cue_dn", "cue_dn+dn_mn"), help="which synapses learn")
+    ap.add_argument("--mn-tone", action="store_true", help="also learn a constant excitability per leg motor neuron")
+    ap.add_argument("--grad-clip", type=float, default=None, help="clip the gradient norm to this")
+    ap.add_argument("--ff-credit", action="store_true",
+                    help="backprop one hop only (leg MNs -> DNs); full BPTT through the connectome's loops explodes")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--device", default=None)
@@ -191,27 +234,29 @@ def main():
     from fly.strokes import PREROLL_MS, STROKES
     from fly.wiring import wire
 
-    takes_paths = sorted(glob(args.takes))
+    takes_paths = take_paths(args.takes)
     held_out = [p for p in takes_paths if "heldout" in Path(p).parts]
     if held_out or not takes_paths:
         raise SystemExit(f"never train on held-out grooves: {held_out}" if held_out else f"no takes match {args.takes}")
     lookahead = default_lookahead_ms()
     settings = {"shuffle_seed": args.shuffled, "lookahead_ms": lookahead, "burst_ms": BURST_MS, "preroll_ms": PREROLL_MS,
-                "rest_on_pedal": True}
+                "rest_on_pedal": True, "plastic": args.plastic, "surrogate_mv": args.surrogate_mv, "ff_credit": args.ff_credit}
 
     t0 = perf_counter()
-    wiring = wire(shuffle_seed=args.shuffled)
-    brain = wiring.brain(batch=args.batch, device=device)
+    wiring = wire(shuffle_seed=args.shuffled, plastic=args.plastic)
+    brain = wiring.brain(batch=args.batch, device=device, surrogate_mv=args.surrogate_mv, tone=args.mn_tone,
+                         ff_credit=args.ff_credit)
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
     if args.init is not None:
-        load_weights(brain, args.init, args.shuffled)
+        load_weights(brain, args.init, args.shuffled, args.plastic)
     strokes = json.loads(STROKES.read_text())
     rest_on_pedal(decoder, strokes)
     loss_fn = Loss(decoder)
     rest = decoder.rest.cpu().numpy()
     takes = [load_take(p, strokes, rest, lookahead, BURST_MS, PREROLL_MS) for p in takes_paths]
     print(f"{wiring.conn.name}{'' if args.shuffled is None else f' shuffled {args.shuffled}'}: "
-          f"{int(wiring.plastic_mask.sum())} plastic edges, {len(takes)} takes "
+          f"{int(wiring.plastic_mask.sum())} plastic edges {wiring.plastic_counts}"
+          f"{f', tone on {len(brain.tone)} motor neurons' if brain.tone is not None else ''}, {len(takes)} takes "
           f"({sum(len(t.rates) for t in takes) / 1000:.0f} s, {sum(t.dropped for t in takes)} notes the teacher can't play), "
           f"built in {perf_counter() - t0:.0f} s", flush=True)
 
@@ -222,7 +267,8 @@ def main():
 
     w = brain.plastic.weight
     sign0 = torch.sign(w.detach().clone())
-    opt = torch.optim.Adam([w], lr=args.lr)
+    params = [w] + ([brain.tone] if brain.tone is not None else [])
+    opt = torch.optim.Adam(params, lr=args.lr)
     steps_per_epoch = pack(takes, args.batch, rest, np.random.default_rng(args.seed))[0].shape[1]
     per_epoch = math.ceil(steps_per_epoch / args.window_ms)
     total = per_epoch * args.epochs if args.max_windows is None else min(args.max_windows, per_epoch * args.epochs)
@@ -253,7 +299,9 @@ def main():
         return min(val, best)
 
     print(f"{total} updates ({per_epoch} per epoch of {steps_per_epoch / 1000:.0f} s x {args.batch} streams), "
-          f"{args.window_ms} ms windows, lr {args.lr}, alpha 1 -> 0 over {args.anneal:.0%}", flush=True)
+          f"{args.window_ms} ms windows, lr {args.lr}, alpha 1 -> 0 over {args.anneal:.0%}, "
+          f"surrogate {args.surrogate_mv or 1} mV, plastic {args.plastic}{', ff credit' if args.ff_credit else ''}"
+          f"{', MN tone' if args.mn_tone else ''}", flush=True)
     best = check(0, 0, math.inf)
     update, t_train = 0, perf_counter()
     for epoch in range(1, args.epochs + 1):
@@ -272,6 +320,8 @@ def main():
                 raise SystemExit(f"loss is {float(loss)} at update {update}; stopped (weights saved to last.pt)")
             opt.zero_grad()
             loss.backward()
+            if args.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(params, args.grad_clip)
             opt.step()
             keep_signs(w, sign0)
             state, r = detach(state), r.detach()

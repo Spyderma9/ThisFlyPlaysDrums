@@ -10,7 +10,8 @@ from fly.brain import FLYBRAIN_CODE, Brain  # noqa: E402
 from fly.connectome import Connectome  # noqa: E402
 from fly.decoder import JOINTS, KIT, Decoder  # noqa: E402
 from fly.drums import LEGS  # noqa: E402
-from fly.train import GAP_MS, Loss, Take, alpha_at, detach, keep_signs, load_weights, pack, run_window, save  # noqa: E402
+from fly.train import (GAP_MS, Loss, Take, alpha_at, detach, keep_signs, load_weights, pack, run_window, save,  # noqa: E402
+                       take_paths)
 
 KIT_DATA = json.loads(KIT.read_text())
 TYPES = ["Ti flexor MN", "Ti flexor MN", "Ti extensor MN", "Fe reductor MN", "MNhl59", "?"]
@@ -36,6 +37,13 @@ def test_alpha_anneals_then_stays_zero():
     assert alpha_at(0, 100, 0.5) == 1.0
     assert alpha_at(25, 100, 0.5) == pytest.approx(0.5)
     assert alpha_at(50, 100, 0.5) == 0.0 and alpha_at(99, 100, 0.5) == 0.0
+
+
+def test_take_paths_accepts_several_globs(tmp_path):
+    for name in ("SD_90.mid", "BD_112.mid", "T1_88.mid"):
+        (tmp_path / name).touch()
+    got = take_paths(f"{tmp_path}/SD_*.mid, {tmp_path}/BD_*.mid,{tmp_path}/SD_9*.mid")
+    assert [p.replace("\\", "/").rsplit("/", 1)[1] for p in got] == ["BD_112.mid", "SD_90.mid"]
 
 
 def test_keep_signs_and_detach():
@@ -124,3 +132,24 @@ def test_one_update_trains_only_the_plastic_edge_and_keeps_its_sign(tmp_path):
     assert torch.equal(w.detach(), trained)
     with pytest.raises(SystemExit):
         load_weights(brain, tmp_path / "w.pt", 1)
+    with pytest.raises(SystemExit):  # trained on another plastic set
+        load_weights(brain, tmp_path / "w.pt", None, "cue_dn+dn_mn")
+
+
+@pytest.mark.skipif(not FLYBRAIN_CODE.exists(), reason="fly-brain not cloned into fly/vendor/")
+def test_tone_is_saved_loaded_and_checked(tmp_path):
+    from fly.train import checkpoint_settings
+
+    neurons = pd.DataFrame({"bodyId": np.arange(20)})
+    conn = Connectome("toy", neurons, pre=np.array([0, 1]), post=np.array([1, 10]), weight=np.array([300.0, 300.0], dtype=np.float32))
+    mask = np.array([True, False])
+    toned = Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu", tone_idx=np.array([10, 11]))
+    with torch.no_grad():
+        toned.tone.copy_(torch.tensor([1.5, -0.5]))
+    save(tmp_path / "t.pt", toned, {"shuffle_seed": None, "plastic": "cue_dn"})
+    assert checkpoint_settings(tmp_path / "t.pt")["tone"] is True
+    fresh = Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu", tone_idx=np.array([10, 11]))
+    load_weights(fresh, tmp_path / "t.pt", None)
+    assert torch.equal(fresh.tone.detach(), torch.tensor([1.5, -0.5]))
+    with pytest.raises(SystemExit):  # a brain without tone can't take a toned checkpoint
+        load_weights(Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu"), tmp_path / "t.pt", None)
