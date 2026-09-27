@@ -47,6 +47,11 @@ def test_kc_cut_masks_and_shuffle(tmp_path):
     assert (ws.plastic_mask == (((ws.conn.pre < 12) & np.isin(ws.conn.post, [12, 13]))
                                 | (np.isin(ws.conn.pre, [12, 13]) & np.isin(ws.conn.post, [16, 17, 18, 19])))).all()
 
+    mn_in = wire(conn, cues_path=cues, plastic="mn_in")  # the leg MNs' whole synaptic input
+    onto_mn = np.isin(mn_in.conn.post, [16, 17, 18, 19])
+    assert onto_mn.any() and (mn_in.plastic_mask == onto_mn).all() and mn_in.plastic_counts == {"mn_in": int(onto_mn.sum())}
+    assert set(mn_in.conn.pre[onto_mn].tolist()) - set(range(12, 14))  # more than the DNs: interneurons, cues, ...
+
     s = wire(conn, shuffle_seed=3, cues_path=cues)  # the shuffle keeps the cut and its exact degrees
     assert not np.isin(s.conn.post, [14, 15]).any()
     assert (np.bincount(s.conn.post, minlength=N) == np.bincount(w.conn.post, minlength=N)).all()

@@ -130,10 +130,14 @@ class Loss:
         self.rest, self.span = decoder.rest, decoder.up + decoder.down
         self.driven = (decoder.eff.abs().sum(1) > 0).float()
 
-    def __call__(self, q: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def per_servo(self, q: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """[B, 32] weighted squared error per servo (0 on servos the decoder can't drive)."""
         err = ((q - target) / self.span) ** 2
         w = 1.0 + ACTIVE_W * (((target - self.rest).abs() / self.span) > ACTIVE_FRAC).float()
-        return (err * w * self.driven).sum() / (self.driven.sum() * q.shape[0])
+        return err * w * self.driven
+
+    def __call__(self, q: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.per_servo(q, target).sum() / (self.driven.sum() * q.shape[0])
 
 
 def run_window(brain, decoder, loss_fn, state, r, rates: torch.Tensor, qstar: torch.Tensor, alpha: float, gen):
@@ -160,6 +164,14 @@ def validate(brain, decoder, loss_fn, rates: torch.Tensor, qstar: torch.Tensor, 
             state, r, loss = run_window(brain, decoder, loss_fn, state, r, rates[:, s:s + window], qstar[:, s:s + window], 0.0, gen)
             losses.append(float(loss) * min(window, rates.shape[1] - s))
     return sum(losses) / rates.shape[1]
+
+
+def hold_still(decoder, loss_fn, qstar: torch.Tensor) -> float:
+    """The loss of a fly that never moves (decoded targets at rest) against qstar [B, T, 32]: the bar a trained fly
+    has to get under by striking in time. A fly that only goes quiet (e.g. by motor-neuron tone) can at best reach it."""
+    with torch.no_grad():
+        flat = qstar.reshape(-1, qstar.shape[-1])
+        return float(loss_fn(decoder.rest.expand_as(flat), flat))
 
 
 def checkpoint_settings(path: Path) -> dict:
@@ -204,6 +216,8 @@ def save(path: Path, brain, settings: dict, **extra) -> None:
 
 
 def main():
+    from fly.wiring import PLASTIC
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--takes", default="grooves/train/*.mid", help="glob, or several separated by commas")
@@ -218,7 +232,7 @@ def main():
     ap.add_argument("--init", type=Path, default=None, help="start from these weights (resume)")
     ap.add_argument("--surrogate-mv", type=float, default=None,
                     help="widen the surrogate gradient to this many mV (backward pass only; default: fly-brain's 1 mV)")
-    ap.add_argument("--plastic", default="cue_dn", choices=("cue_dn", "cue_dn+dn_mn"), help="which synapses learn")
+    ap.add_argument("--plastic", default="cue_dn", choices=PLASTIC, help="which synapses learn")
     ap.add_argument("--mn-tone", action="store_true", help="also learn a constant excitability per leg motor neuron")
     ap.add_argument("--grad-clip", type=float, default=None, help="clip the gradient norm to this")
     ap.add_argument("--ff-credit", action="store_true",
@@ -264,6 +278,7 @@ def main():
     n_val = min(args.val_ms, val_rates.shape[1])
     val_rates = torch.as_tensor(val_rates[:, :n_val], device=device)
     val_q = torch.as_tensor(val_q[:, :n_val], device=device)
+    hold = hold_still(decoder, loss_fn, val_q)
 
     w = brain.plastic.weight
     sign0 = torch.sign(w.detach().clone())
@@ -275,7 +290,7 @@ def main():
 
     args.out.mkdir(parents=True, exist_ok=True)
     meta = {"args": {k: str(v) for k, v in vars(args).items()}, "device": device, **settings,
-            "wiring": wiring.summary(), "updates": total, "updates_per_epoch": per_epoch,
+            "hold_still_val": hold, "wiring": wiring.summary(), "updates": total, "updates_per_epoch": per_epoch,
             "steps_per_epoch": steps_per_epoch, "takes": [{"path": t.path, "steps": len(t.rates), "notes": t.notes,
                                                            "dropped": t.dropped} for t in takes]}
     (args.out / "meta.json").write_text(json.dumps(meta, indent=1))
@@ -292,7 +307,8 @@ def main():
         val_w.writerow([epoch, update, f"{val:.6f}", round(perf_counter() - t0, 1)])
         val_f.flush()
         print(f"  validation (alpha 0, {n_val / 1000:.0f} s x {args.batch}): {val:.5f}"
-              f"{'  (best)' if val < best else ''}  [{perf_counter() - t:.0f} s]", flush=True)
+              f"{'  (best)' if val < best else ''}  {'BELOW' if val < hold else 'above'} hold-still {hold:.5f}  "
+              f"[{perf_counter() - t:.0f} s]", flush=True)
         save(args.out / "last.pt", brain, settings, epoch=epoch, update=update, val_loss=val)
         if val < best:
             save(args.out / "best.pt", brain, settings, epoch=epoch, update=update, val_loss=val)
