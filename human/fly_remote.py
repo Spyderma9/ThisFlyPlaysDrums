@@ -33,6 +33,10 @@ MODEL_FILES = ("fly.json", "fly.bin", "neurons.json", "neurons.bin")
 STEPS_RE = re.compile(r": (\d+) steps on (\w+)")
 PROGRESS_RE = re.compile(r"^\s*(\d+) ms\s+(\d+) s\s+(\d+) hits", re.M)
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+# Windows 10's own OpenSSH (7.7) takes ~15 s per call here and sometimes never exits after the command ends;
+# Git for Windows' ssh (9.x) takes 0.4 s. Same ~/.ssh key and known_hosts.
+GIT_SSH = Path(r"C:\Program Files\Git\usr\bin\ssh.exe")
+SSH = str(GIT_SSH) if GIT_SSH.exists() else "ssh"
 
 
 class RemoteError(Exception):
@@ -104,8 +108,11 @@ class Remote:
 
     def ssh(self, command, data=None, check=True):
         """Run `command` in the server's shell. -> stdout bytes."""
-        args = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", self.host, command]
-        done = self._run(args, input=data, capture_output=True)
+        # ServerAlive: a connection that stalls (Tailscale hiccup) fails after ~15 s instead of hanging forever.
+        # input b"" rather than None, so ssh never waits on the console's stdin.
+        args = [SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=5",
+                "-o", "ServerAliveCountMax=3", self.host, command]
+        done = self._run(args, input=b"" if data is None else data, capture_output=True)
         if check and done.returncode:
             err = done.stderr.decode(errors="replace").strip()
             raise RemoteError(f"ssh {self.host}: {err or f'exit {done.returncode}'}")
