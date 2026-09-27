@@ -11,7 +11,8 @@ import numpy as np  # noqa: E402
 
 from fly.drums import DRUM_CHANNEL  # noqa: E402
 from fly.encoder import encode_onsets  # noqa: E402
-from fly.loop import Recorder, load_poses, play, score_time, simulate, write_run  # noqa: E402
+from fly.loop import (Recorder, SpikeRecorder, guided_current, listen, load_poses, load_spikes, play,  # noqa: E402
+                      score_time, simulate, write_run)
 
 
 @dataclass
@@ -145,3 +146,42 @@ def test_teacher_run_matches_the_ceiling_check(tmp_path):
     assert meta["driver"] == "teacher"
     poses = load_poses(tmp_path / "teacher")
     assert poses["qpos"].shape == (meta["steps"], 102)
+
+
+def test_spike_recorder_keeps_which_neurons_fired_each_step(tmp_path):
+    rates = np.zeros((5, 12), np.float32)
+    rates[1, 0] = rates[1, 2] = rates[3, 3] = 100.0  # _Brain fires neuron k when voice column k (< 4) is driven
+    spk = SpikeRecorder(5)
+    simulate(rates, _Brain(), _Decoder(), _Body([]), on_step=spk)
+    spk.save(tmp_path / "spikes.npz")
+    s = load_spikes(tmp_path)
+    assert s["offsets"].tolist() == [0, 0, 2, 2, 3, 3]
+    assert s["ids"].tolist() == [0, 2, 3]
+    assert s["n_neurons"] == 4
+
+
+class _CurrentDecoder:
+    def current_for(self, q):
+        return q.sum(dim=1, keepdim=True) * torch.ones(1, 3)
+
+
+def test_guided_current_is_alpha_times_the_teachers_motor_current():
+    qstar = np.arange(4 * 2, dtype=np.float32).reshape(4, 2)
+    assert guided_current(qstar, _CurrentDecoder(), 0.0) is None  # the fly on its own
+    cur = guided_current(qstar, _CurrentDecoder(), 0.5)
+    assert torch.allclose(cur(2, None), torch.full((1, 3), 0.5 * (4 + 5)))
+
+
+def test_listen_moves_the_body_with_qstar_while_the_brain_runs_alongside(tmp_path):
+    """The visual branch's 'teacher plays, brain listens': q* drives the legs, the brain's firing is only recorded."""
+    rates = np.zeros((4, 12), np.float32)
+    rates[2, 1] = 100.0  # the cue for neuron 1 at step 2
+    q = np.arange(4 * 32, dtype=np.float32).reshape(4, 32)
+    body, spk, seen = _PoseBody([3]), SpikeRecorder(4), []
+    current = lambda t, _q: seen.append(t) or torch.zeros(1, 4)  # noqa: E731
+    hits = listen(rates, _Brain(), body, q, current=current, on_step=spk)
+    assert np.array_equal(np.stack(body.targets), q)  # the legs follow q*, not the brain
+    assert [h.t_ms for h in hits] == [2.6]
+    assert seen == [0, 1, 2, 3]  # the teacher's current reaches the brain every step
+    spk.save(tmp_path / "spikes.npz")
+    assert load_spikes(tmp_path)["ids"].tolist() == [1]
