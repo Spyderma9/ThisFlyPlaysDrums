@@ -13,7 +13,7 @@ const S = 10; // scene units per cm
 const LANE_ORDER = ["crash", "ride", "hat", "tom1", "tom2", "tom3", "snare", "kick", "hat_pedal"];
 const PAD_NAMES = { snare: "Snare", hat: "Hi-hat", crash: "Crash", ride: "Ride", tom1: "Tom 1", tom2: "Tom 2",
   tom3: "Tom 3", kick: "Kick", hat_pedal: "Hi-hat pedal" };
-const VOICE_NAMES = { snare: "snare", xstick: "cross-stick", hat_closed: "hi-hat", hat_open: "open hi-hat",
+const VOICE_NAMES = { snare: "snare", xstick: "snare rim", hat_closed: "hi-hat", hat_open: "open hi-hat",
   hat_pedal: "hi-hat pedal", kick: "kick", tom1: "tom 1", tom2: "tom 2", tom3: "tom 3", crash: "crash",
   ride: "ride", ride_bell: "ride bell" };
 // MuJoCo free-camera presets (lookat cm, distance cm, azimuth, elevation), as in fly/clip.py

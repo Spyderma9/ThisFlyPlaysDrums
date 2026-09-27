@@ -2,5 +2,5 @@
  "host": "root@t5600.tail3495cd.ts.net",
  "repo": "/mnt/user/dev/ThisFlyPlaysDrums",
  "fx": "/mnt/user/dev/fx",
- "weights": "runs/train/f3/best.pt"
+ "weights": "runs/train/f5/best.pt"
 }
