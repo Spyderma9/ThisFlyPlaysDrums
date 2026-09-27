@@ -26,6 +26,8 @@ body {
 }
 
 #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#stage { cursor: grab; }
+#stage:active { cursor: grabbing; }
 
 button, select {
   font: 500 16px/1 var(--condensed);
@@ -81,6 +83,8 @@ select option { background: var(--stage); }
 }
 .views button { background: var(--glass); text-align: left; }
 .views button[aria-pressed="true"] { border-color: var(--text); }
+.free-hint { margin: 0 0 4px; padding: 6px 11px; color: var(--muted); font: 500 15px/1.35 var(--condensed); background: var(--glass); border-radius: 6px; }
+.free-hint[hidden] { display: none; }
 
 /* the deck: transport and the drum lanes */
 .deck {

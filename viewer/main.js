@@ -54,6 +54,11 @@ controls.dampingFactor = 0.08;
 controls.minDistance = 0.4;
 controls.maxDistance = 25;
 controls.autoRotateSpeed = 0.6;
+controls.maxPolarAngle = Math.PI * 0.55; // the free camera can dip a little below the fly, never under the floor
+controls.addEventListener("start", () => { // you grabbed the camera: stop any glide, and it's the free camera now
+  camTween = null;
+  if (currentView !== "free") markView("free");
+});
 
 const root = new THREE.Group(); // MuJoCo frame: z up, cm
 root.rotation.x = -Math.PI / 2;
@@ -84,13 +89,26 @@ function viewPose(name) {
   return { target: mjToThree(lookat), position: mjToThree(eye) };
 }
 
+const VIEW_KEYS = [...Object.keys(VIEWS), "free"]; // keys 1-6; "free" = wherever you drag the camera
 let camTween = null;
-function setView(name) {
-  const to = viewPose(name);
+let currentView = null;
+
+function markView(name) { // highlight the button, remember it in the URL, show the drag hint for the free camera
+  currentView = name;
   document.querySelectorAll(".views [data-view]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.view === name));
+  $("free-hint").hidden = name !== "free";
   const u = new URL(location.href);
   u.searchParams.set("view", name);
   history.replaceState(null, "", u);
+}
+
+function setView(name) {
+  markView(name);
+  if (name === "free") { // the camera stays put; you move it
+    camTween = null;
+    return;
+  }
+  const to = viewPose(name);
   if (reducedMotion) {
     camera.position.copy(to.position);
     controls.target.copy(to.target);
@@ -596,8 +614,7 @@ function wire() {
       e.preventDefault();
       clock.playing ? stopPlayback() : play();
     }
-    const views = Object.keys(VIEWS);
-    if (/^[1-5]$/.test(e.key)) setView(views[+e.key - 1]);
+    if (/^[1-6]$/.test(e.key)) setView(VIEW_KEYS[+e.key - 1]);
   });
   addEventListener("resize", resize);
 }
@@ -618,12 +635,11 @@ async function main() {
   wire();
   resize();
   const u = new URL(location.href);
-  const view = u.searchParams.get("view");
-  const start = viewPose(VIEWS[view] ? view : "three_quarter");
+  const view = VIEW_KEYS.includes(u.searchParams.get("view")) ? u.searchParams.get("view") : "three_quarter";
+  const start = viewPose(VIEWS[view] ? view : "three_quarter"); // the free camera starts from three-quarter
   camera.position.copy(start.position);
   controls.target.copy(start.target);
-  document.querySelectorAll(".views [data-view]").forEach((b) =>
-    b.setAttribute("aria-pressed", b.dataset.view === (VIEWS[view] ? view : "three_quarter")));
+  markView(view);
   requestAnimationFrame(frame);
   setInterval(() => run && scheduleMidi(performance.now()), MIDI_TICK_MS);
   const index = await getJSON("viewer_index.json");
@@ -641,5 +657,5 @@ main().catch(showError);
 // exposed for tests (Playwright) and the console
 window.flyDrums = {
   get run() { return run; }, get kit() { return kit; }, clock, seek, play, pause: stopPlayback, setSpeed, setView, nowS,
-  midi, scheduleMidi, resetMidi, fps,
+  midi, scheduleMidi, resetMidi, fps, get view() { return currentView; }, camera, controls,
 };
