@@ -17,7 +17,7 @@ const METER_MAX_HZ = { hearing: 150, descending: 40, motor: 80 };
 const REGION_BASE = { 0: "#3a3438", 1: "#2c3a4d", 2: "#4a3a36", 3: "#3a3550" }; // other, optic lobe, central brain, nerve cord
 const HOT = new THREE.Color("#ffd29a");
 const LEG_LABEL = { front_left: "Front left", front_right: "Front right", hind_left: "Hind left", hind_right: "Hind right" };
-const VOICE_LABEL = { kick: "Kick", hat_pedal: "Hat pedal", snare: "Snare", xstick: "Cross-stick", hat_closed: "Hi-hat",
+const VOICE_LABEL = { kick: "Kick", hat_pedal: "Hat pedal", snare: "Snare", xstick: "Snare rim", hat_closed: "Hi-hat",
   hat_open: "Open hat", tom1: "Tom 1", tom2: "Tom 2", tom3: "Tom 3", crash: "Crash", ride: "Ride", ride_bell: "Ride bell" };
 
 const VERTEX = /* glsl */ `

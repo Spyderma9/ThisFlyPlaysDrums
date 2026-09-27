@@ -8,7 +8,7 @@
 Usage:
     python human/play_it.py my_score.musicxml
     python human/play_it.py --record --count-in 4 --bpm 90
-    python human/play_it.py groove.mid --seconds 15 --weights runs/train/f3/best.pt
+    python human/play_it.py groove.mid --seconds 15 --weights runs/train/f5/best.pt
     python human/play_it.py --fetch my_score              # a run that finished while the laptop was away
 
 Then view it: `python -m http.server 8000` in the repo root, and Chrome at the printed address.

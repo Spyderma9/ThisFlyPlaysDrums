@@ -143,6 +143,8 @@ class Songs:
 class Handler(SimpleHTTPRequestHandler):
     songs = None  # set by make_server
     takes_dir = REPO / "takes"
+    # Windows' registry often maps .js to text/plain, and Chrome refuses to run a module served as that
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript"}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(REPO), **kwargs)
