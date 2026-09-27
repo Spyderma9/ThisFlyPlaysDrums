@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/OrbitControls.js";
 import { BrainPanel } from "./brain.js";
+import { initSongPanel } from "./song.js";
 
 const RUNS = new URL("../runs/", location.href);
 const S = 10; // scene units per cm
@@ -413,19 +414,25 @@ function setPlayIcon() {
 
 const midi = { access: null, out: null };
 
-async function connectMidi() {
-  if (!navigator.requestMIDIAccess) {
-    ui.midiStatus.textContent = "This browser has no Web MIDI. Use Chrome.";
-    return;
-  }
+async function midiAccess() { // shared by playback (outputs) and the New song panel's recording (inputs)
+  if (midi.access) return midi.access;
+  if (!navigator.requestMIDIAccess) throw new Error("This browser has no Web MIDI. Use Chrome.");
   try {
     midi.access = await navigator.requestMIDIAccess();
   } catch (e) {
-    ui.midiStatus.textContent = "MIDI access was blocked. Allow it in the address bar, then connect again.";
-    return;
+    throw new Error("MIDI access was blocked. Allow it in the address bar, then try again.");
   }
   midi.access.onstatechange = listOutputs;
   listOutputs();
+  return midi.access;
+}
+
+async function connectMidi() {
+  try {
+    await midiAccess();
+  } catch (e) {
+    ui.midiStatus.textContent = e.message;
+  }
 }
 
 function listOutputs() {
@@ -669,13 +676,27 @@ async function main() {
   markView(view);
   requestAnimationFrame(frame);
   setInterval(() => run && scheduleMidi(performance.now()), MIDI_TICK_MS);
-  const index = await getJSON("viewer_index.json");
+  initSongPanel({ loadRun: showNewRun, stopPlayback, midiAccess }).catch(console.error);
+  const index = await refreshRuns();
   if (!index.length) throw new Error("no exported runs in runs/viewer_index.json");
+  const id = u.searchParams.get("run") || index[0].id;
+  await loadRun(id);
+}
+
+async function refreshRuns() {
+  const index = await getJSON("viewer_index.json");
   ui.runPicker.replaceChildren(...index.map((r) => {
     const who = r.driver === "teacher" ? "teacher" : r.alpha > 0 ? `guided α ${r.alpha}` : "fly on its own";
     return new Option(`${r.groove || r.id} (${who}${r.brain ? ", brain" : ""}, ${r.hits} hits)`, r.id);
   }));
-  const id = u.searchParams.get("run") || index[0].id;
+  return index;
+}
+
+async function showNewRun(id) { // a run the New song panel just brought back
+  await refreshRuns();
+  const u = new URL(location.href);
+  u.searchParams.set("run", id);
+  history.replaceState(null, "", u);
   await loadRun(id);
 }
 
