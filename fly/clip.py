@@ -88,8 +88,7 @@ def main():
     from fly.encoder import encode, read_onsets
     from fly.loop import BURST_MS, default_lookahead_ms, simulate
     from fly.strokes import PREROLL_MS, STROKES, plan, teacher
-    from fly.train import load_weights, rest_on_pedal
-    from fly.wiring import wire
+    from fly.train import rest_on_pedal, wire_brain
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     strokes = json.loads(STROKES.read_text())
@@ -97,10 +96,8 @@ def main():
     t0 = int(args.start * 1000 + enc.offset_ms)
     t1 = min(len(enc.rates), int((args.start + args.seconds) * 1000 + enc.offset_ms))
 
-    wiring = wire(shuffle_seed=args.shuffled)
-    brain = wiring.brain(device=device)
+    wiring, brain, ck = wire_brain(args.weights, args.shuffled, device)  # the trained plastic set and tone, if any
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
-    ck = load_weights(brain, args.weights, args.shuffled) if args.weights is not None else None
     if ck is None or ck.get("rest_on_pedal", False):  # the posture fly.loop and fly.train use
         rest_on_pedal(decoder, strokes)
     label = f"fly on its own ({args.weights.parent.name}/{args.weights.name}, epoch {ck.get('epoch', '?')})" \

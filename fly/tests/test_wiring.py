@@ -36,6 +36,17 @@ def test_kc_cut_masks_and_shuffle(tmp_path):
     assert (w.plastic_mask == ((w.conn.pre < 12) & np.isin(w.conn.post, [12, 13]))).all()
     assert [int(w.leg_mns[leg][0]) for leg in LEGS] == [16, 17, 18, 19]
 
+    assert w.plastic == "cue_dn" and w.plastic_counts == {"cue_dn": int(w.plastic_mask.sum())}
+
+    wide = wire(conn, cues_path=cues, plastic="cue_dn+dn_mn")  # also descending -> leg motor neurons
+    cue_dn = (wide.conn.pre < 12) & np.isin(wide.conn.post, [12, 13])
+    dn_mn = np.isin(wide.conn.pre, [12, 13]) & np.isin(wide.conn.post, [16, 17, 18, 19])
+    assert dn_mn.any() and (wide.plastic_mask == (cue_dn | dn_mn)).all()
+    assert wide.plastic_counts == {"cue_dn": int(cue_dn.sum()), "dn_mn": int(dn_mn.sum())}
+    ws = wire(conn, shuffle_seed=3, cues_path=cues, plastic="cue_dn+dn_mn")  # recomputed on the shuffled edges
+    assert (ws.plastic_mask == (((ws.conn.pre < 12) & np.isin(ws.conn.post, [12, 13]))
+                                | (np.isin(ws.conn.pre, [12, 13]) & np.isin(ws.conn.post, [16, 17, 18, 19])))).all()
+
     s = wire(conn, shuffle_seed=3, cues_path=cues)  # the shuffle keeps the cut and its exact degrees
     assert not np.isin(s.conn.post, [14, 15]).any()
     assert (np.bincount(s.conn.post, minlength=N) == np.bincount(w.conn.post, minlength=N)).all()

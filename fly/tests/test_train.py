@@ -124,3 +124,24 @@ def test_one_update_trains_only_the_plastic_edge_and_keeps_its_sign(tmp_path):
     assert torch.equal(w.detach(), trained)
     with pytest.raises(SystemExit):
         load_weights(brain, tmp_path / "w.pt", 1)
+    with pytest.raises(SystemExit):  # trained on another plastic set
+        load_weights(brain, tmp_path / "w.pt", None, "cue_dn+dn_mn")
+
+
+@pytest.mark.skipif(not FLYBRAIN_CODE.exists(), reason="fly-brain not cloned into fly/vendor/")
+def test_tone_is_saved_loaded_and_checked(tmp_path):
+    from fly.train import checkpoint_settings
+
+    neurons = pd.DataFrame({"bodyId": np.arange(20)})
+    conn = Connectome("toy", neurons, pre=np.array([0, 1]), post=np.array([1, 10]), weight=np.array([300.0, 300.0], dtype=np.float32))
+    mask = np.array([True, False])
+    toned = Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu", tone_idx=np.array([10, 11]))
+    with torch.no_grad():
+        toned.tone.copy_(torch.tensor([1.5, -0.5]))
+    save(tmp_path / "t.pt", toned, {"shuffle_seed": None, "plastic": "cue_dn"})
+    assert checkpoint_settings(tmp_path / "t.pt")["tone"] is True
+    fresh = Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu", tone_idx=np.array([10, 11]))
+    load_weights(fresh, tmp_path / "t.pt", None)
+    assert torch.equal(fresh.tone.detach(), torch.tensor([1.5, -0.5]))
+    with pytest.raises(SystemExit):  # a brain without tone can't take a toned checkpoint
+        load_weights(Brain(conn, {"kick": np.array([0])}, plastic_mask=mask, device="cpu"), tmp_path / "t.pt", None)

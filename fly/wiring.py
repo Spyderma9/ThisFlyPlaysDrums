@@ -10,7 +10,7 @@ network it controls. Masks are always computed on the (possibly shuffled) edges.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -22,28 +22,33 @@ from fly.probe import LEGS as LEG_NERVES, _side
 
 CUES = Path(__file__).with_name("cues.json")
 DESCENDING = "descending_neuron"
+PLASTIC = ("cue_dn", "cue_dn+dn_mn")  # trainable sets: D3's cue -> DN, optionally plus DN -> leg motor neurons
 
 
 @dataclass
 class Wiring:
     conn: Connectome
     cue_groups: dict[str, np.ndarray]  # voice -> neuron rows, drums.VOICES order
-    plastic_mask: np.ndarray  # bool per edge: pre is a cue neuron, post a descending neuron
+    plastic_mask: np.ndarray  # bool per edge: the trainable set (see PLASTIC)
     leg_mns: dict[str, np.ndarray]  # leg -> motor-neuron rows, drums.LEGS order
     mn_types: dict[str, list[str]]  # leg -> cell type per motor neuron, same order ("?" if unnamed)
     kc_edges_cut: int
     shuffle_seed: int | None
+    plastic: str = "cue_dn"
+    plastic_counts: dict = field(default_factory=dict)
 
-    def brain(self, batch: int = 1, device: str = "cuda"):
+    def brain(self, batch: int = 1, device: str = "cuda", surrogate_mv: float | None = None, tone: bool = False):
         from fly.brain import Brain
 
-        return Brain(self.conn, self.cue_groups, self.plastic_mask, batch=batch, device=device)
+        tone_idx = np.concatenate(list(self.leg_mns.values())) if tone else None
+        return Brain(self.conn, self.cue_groups, self.plastic_mask, batch=batch, device=device,
+                     surrogate_mv=surrogate_mv, tone_idx=tone_idx)
 
     def summary(self) -> dict:
         return {
             "connectome": self.conn.name, "neurons": self.conn.size, "edges": len(self.conn.pre),
             "kc_edges_cut": self.kc_edges_cut, "shuffle_seed": self.shuffle_seed,
-            "plastic_edges": int(self.plastic_mask.sum()),
+            "plastic": self.plastic, "plastic_edges": int(self.plastic_mask.sum()), "plastic_counts": self.plastic_counts,
             "cue_groups": {v: len(i) for v, i in self.cue_groups.items()},
             "leg_mns": {leg: len(i) for leg, i in self.leg_mns.items()},
         }
@@ -72,7 +77,10 @@ def cue_groups(neurons: pd.DataFrame, cues_path: Path = CUES) -> dict[str, np.nd
     return {v.name: row.loc[drums[v.name]["bodyIds"]].to_numpy() for v in VOICES}
 
 
-def wire(conn: Connectome | None = None, shuffle_seed: int | None = None, cues_path: Path = CUES) -> Wiring:
+def wire(conn: Connectome | None = None, shuffle_seed: int | None = None, cues_path: Path = CUES,
+         plastic: str = "cue_dn") -> Wiring:
+    if plastic not in PLASTIC:
+        raise ValueError(f"plastic must be one of {PLASTIC}, not {plastic!r}")
     conn, n_cut = cut_kc_inputs(conn if conn is not None else load_malecns())
     if shuffle_seed is not None:
         conn = conn.shuffled(shuffle_seed)
@@ -80,6 +88,12 @@ def wire(conn: Connectome | None = None, shuffle_seed: int | None = None, cues_p
     is_cue = np.zeros(conn.size, dtype=bool)
     is_cue[np.concatenate(list(cues.values()))] = True
     is_dn = (conn.neurons["superclass"] == DESCENDING).to_numpy()
-    plastic = is_cue[conn.pre] & is_dn[conn.post]
     mns, types = leg_motor_neurons(conn.neurons)
-    return Wiring(conn, cues, plastic, mns, types, n_cut, shuffle_seed)
+    is_mn = np.zeros(conn.size, dtype=bool)
+    is_mn[np.concatenate(list(mns.values()))] = True
+    classes = {"cue_dn": is_cue[conn.pre] & is_dn[conn.post]}  # D3
+    if plastic == "cue_dn+dn_mn":  # also descending -> playing-leg motor neurons: which legs and joints each DN drives
+        classes["dn_mn"] = is_dn[conn.pre] & is_mn[conn.post]
+    mask = np.logical_or.reduce(list(classes.values()))
+    counts = {k: int(m.sum()) for k, m in classes.items()}
+    return Wiring(conn, cues, mask, mns, types, n_cut, shuffle_seed, plastic, counts)

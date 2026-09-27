@@ -13,6 +13,7 @@ through the fixed wiring, while the fixed weights themselves never get gradients
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -62,6 +63,25 @@ class PlasticEdges(nn.Module):
         return out.index_add(1, self.post, spikes[:, self.pre] * self.weight)
 
 
+class _WideSpike(torch.autograd.Function):
+    """fly-brain's spike (Heaviside, identical forward) with its ATan surrogate widened: 1/(1+(pi v/width)^2).
+
+    fly-brain's surrogate has width 1 in mV units, while rest -> threshold is 7 mV, so the gradient is ~0.002 at rest
+    and vanishes across the two spiking layers between a cue synapse and a motor neuron. Only the backward pass
+    changes: the simulated fly is exactly the same."""
+
+    @staticmethod
+    def forward(ctx, v, width):
+        ctx.save_for_backward(v)
+        ctx.width = width
+        return (v > 0).float()
+
+    @staticmethod
+    def backward(ctx, grad):
+        (v,) = ctx.saved_tensors
+        return grad / (1 + (math.pi * v / ctx.width) ** 2), None
+
+
 class Brain(nn.Module):
     def __init__(
         self,
@@ -70,6 +90,8 @@ class Brain(nn.Module):
         plastic_mask: np.ndarray | None = None,  # bool per edge in conn; these edges become trainable
         batch: int = 1,
         device: str = "cuda",
+        surrogate_mv: float | None = None,  # widen the surrogate gradient (training only; forward unchanged)
+        tone_idx: np.ndarray | None = None,  # neurons that get a trainable constant current (motor-neuron tone)
     ):
         super().__init__()
         fb = _flybrain()
@@ -92,6 +114,13 @@ class Brain(nn.Module):
         cue_idx = np.concatenate([cue_groups[v] for v in self.voices])
         # fly-brain gives directly stimulated neurons no refractory period, so Poisson input isn't gated.
         self.neurons = fb.AlphaLIF(batch, conn.size, DT_MS, self.params, exc_indices=torch.as_tensor(cue_idx), device=device)
+        self.surrogate_mv = surrogate_mv
+        if surrogate_mv is not None:  # an instance attribute, so fly-brain itself is untouched
+            self.neurons.neuron.spike_gradient = lambda v: _WideSpike.apply(v, float(surrogate_mv))
+        self.tone = None
+        if tone_idx is not None:  # resting excitability per neuron, the same at every moment: it can't encode a groove
+            self.register_buffer("tone_idx", torch.as_tensor(tone_idx, dtype=torch.long, device=device))
+            self.tone = nn.Parameter(torch.zeros(len(tone_idx), device=device))
         self.poisson = fb.PoissonSpikeGenerator(DT_MS, self.params["scalePoisson"], device=device)
         # voice rate [B, V] -> neuron rate [B, N]
         spread = torch.zeros(len(self.voices), conn.size, device=device)
@@ -108,6 +137,8 @@ class Brain(nn.Module):
         stim = self.scale * self.poisson(voice_rates @ self.spread, generator=generator)
         if current is not None:
             stim = stim + current
+        if self.tone is not None:
+            stim = stim.index_add(1, self.tone_idx, self.tone.expand(stim.shape[0], -1))
         recurrent = _FrozenMatmul.apply(spikes, self.w, self.w_t)
         if self.plastic is not None:
             recurrent = recurrent + self.plastic(spikes)

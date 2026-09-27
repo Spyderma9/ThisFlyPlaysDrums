@@ -121,8 +121,8 @@ def main():
     from fly.body import Body
     from fly.decoder import Decoder
     from fly.encoder import encode
-    from fly.strokes import PREROLL_MS
-    from fly.wiring import wire
+    from fly.strokes import PREROLL_MS, STROKES
+    from fly.train import rest_on_pedal, wire_brain
 
     lookahead = args.lookahead_ms if args.lookahead_ms is not None else default_lookahead_ms()
     preroll = args.preroll_ms if args.preroll_ms is not None else PREROLL_MS
@@ -132,14 +132,9 @@ def main():
     rates = enc.rates
     if args.seconds is not None:
         rates = rates[: int((args.seconds * 1000 + enc.offset_ms) / enc.dt_ms)]
-    wiring = wire(shuffle_seed=args.shuffled)
+    wiring, brain, ck = wire_brain(args.weights, args.shuffled, device)  # the trained plastic set and tone, if any
     timings["wiring_s"] = perf_counter() - t0
-    brain = wiring.brain(device=device)
     decoder = Decoder(wiring.leg_mns, wiring.mn_types, wiring.conn.size).to(device)
-    from fly.strokes import STROKES
-    from fly.train import load_weights, rest_on_pedal
-
-    ck = load_weights(brain, args.weights, args.shuffled) if args.weights is not None else None
     on_pedal = ck is None or ck.get("rest_on_pedal", False)  # same posture as training; untrained runs match new ones
     if on_pedal:
         rest_on_pedal(decoder, json.loads(STROKES.read_text()))
