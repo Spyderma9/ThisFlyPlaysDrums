@@ -17,6 +17,10 @@ meta.json, which names its groove, and hits.csv). Several seeds of one condition
 Matching is score.py's (same drum, within --tolerance ms, edges fold onto their drum), with no --align: when the
 fly plays is part of what's scored. Caveat printed with the table: segments of one run share its state, and one
 Poisson seed per condition doesn't measure seed-to-seed spread.
+
+Chance: a fly that hits a lot matches some notes by luck. Each run's own hits are slid by a random offset (at least
+1 s, wrapping around the end) and re-scored --shifts times: same hits, same rhythm, no alignment with the score.
+F1 above that is F1 from playing *this* groove; p is the share of shifts that scored at least as well.
 """
 import argparse
 import csv
@@ -27,10 +31,28 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from score import TOLERANCE_MS, load_hits, match, stats
+from drum_map import DRUMS
+from score import TOLERANCE_MS, load_hits, match, score, stats
 
 REPO = Path(__file__).resolve().parents[1]
 BASELINES = ("shuffled", "untrained")  # the default comparison, first one present
+MIN_SHIFT_MS = 1000.0
+
+
+def chance(ref, played, tol, n_shifts, rng):
+    """Scores of the run's own hits slid by random offsets (wrapping): -> ([overall F1], {note: [F1]}, [hits])."""
+    if not played:
+        return [0.0] * n_shifts, {}, [0] * n_shifts
+    period = max(max(t for t, _, _ in ref), max(t for t, _, _ in played)) + tol
+    f1s, hits, per_drum = [], [], defaultdict(list)
+    for _ in range(n_shifts):
+        off = rng.uniform(MIN_SHIFT_MS, period - MIN_SHIFT_MS)
+        overall, drums = score(ref, sorted(((t + off) % period, n, v) for t, n, v in played), tol)
+        f1s.append(overall["f1"])
+        hits.append(overall["hit"])
+        for note, s in drums.items():
+            per_drum[note].append(s["f1"])
+    return f1s, per_drum, hits
 
 
 def segment_scores(ref, played, tol, segment_ms):
@@ -95,7 +117,9 @@ def main():
     ap.add_argument("--segment-s", type=float, default=10.0)
     ap.add_argument("--tolerance", type=float, default=TOLERANCE_MS)
     ap.add_argument("--csv", type=Path, help="also write one row per condition, groove and segment")
+    ap.add_argument("--shifts", type=int, default=200, help="random time shifts per run for the chance line (0: skip)")
     args = ap.parse_args()
+    rng = random.Random(0)
 
     runs = load_runs(args.root)
     if not runs:
@@ -104,15 +128,24 @@ def main():
     refs = {g: load_hits(REPO / g) for g in grooves}
 
     # per condition: whole-groove totals and per-segment F1 (averaged over seeds)
-    seg_f1, totals, rows = {}, {}, []
+    seg_f1, totals, rows, luck = {}, {}, [], {}
     for cond, by_groove in sorted(runs.items()):
         seg_f1[cond], counts = {}, defaultdict(int)
+        obs, null, drum_obs, drum_null, drum_played = [], [], defaultdict(list), defaultdict(list), defaultdict(int)
         for g in grooves:
             for run in by_groove.get(g, []):
                 played = load_hits(run / "hits.csv")
                 overall = stats(refs[g], played, match(refs[g], played, args.tolerance))
                 for k in ("ref", "played", "hit"):
                     counts[k] += overall[k]
+                if args.shifts:
+                    f1s, null_drums, null_hits = chance(refs[g], played, args.tolerance, args.shifts, rng)
+                    obs.append((overall["f1"], overall["hit"]))
+                    null.append((f1s, null_hits))
+                    for note, s in score(refs[g], played, args.tolerance)[1].items():
+                        drum_obs[note].append(s["f1"])
+                        drum_null[note].append(null_drums.get(note, [0.0] * args.shifts))
+                        drum_played[note] += s["played"]
                 for i, s in enumerate(segment_scores(refs[g], played, args.tolerance, args.segment_s * 1000)):
                     seg_f1[cond].setdefault((g, i), []).append(s["f1"])
                     rows.append([cond, g, run.name, i, s["ref"], s["played"], s["hit"], f"{s['f1']:.4f}"])
@@ -121,6 +154,18 @@ def main():
         r = counts["hit"] / counts["ref"] if counts["ref"] else 0.0
         totals[cond] = {"runs": sum(len(v) for v in by_groove.values()), "grooves": len(by_groove), **counts,
                         "precision": p, "recall": r, "f1": 2 * p * r / (p + r) if counts["hit"] else 0.0}
+        if obs:  # pooled over runs: the i-th shift of every run together is one draw of a luck-only fly
+            obs_f1 = statistics.fmean(f for f, _ in obs)
+            null_f1 = [statistics.fmean(f1s[i] for f1s, _ in null) for i in range(args.shifts)]
+            per_drum = {}
+            for note, xs in drum_obs.items():
+                if drum_played[note] >= 5:
+                    per_drum[note] = (statistics.fmean(xs), statistics.fmean(statistics.fmean(n) for n in drum_null[note]))
+            luck[cond] = {"f1": obs_f1, "chance_f1": statistics.fmean(null_f1),
+                          "p": (sum(x >= obs_f1 - 1e-12 for x in null_f1) + 1) / (args.shifts + 1),
+                          "hits": sum(h for _, h in obs),
+                          "chance_hits": statistics.fmean(sum(hs[i] for _, hs in null) for i in range(args.shifts)),
+                          "per_drum": per_drum}
 
     print(f"held-out: {', '.join(grooves)}; tolerance {args.tolerance:g} ms; {args.segment_s:g} s segments\n")
     print(f"{'condition':<14}{'runs':>5}{'ref':>7}{'played':>8}{'hit':>6}{'prec':>7}{'recall':>8}{'F1':>7}"
@@ -131,6 +176,15 @@ def main():
         print(f"{cond:<14}{t['runs']:>5}{t['ref']:>7}{t['played']:>8}{t['hit']:>6}{t['precision']:>7.3f}"
               f"{t['recall']:>8.3f}{t['f1']:>7.3f}   {len(f1s)}, {statistics.fmean(f1s):.3f}, {sd:.3f}, "
               f"{statistics.median(f1s):.3f}")
+
+    if luck:
+        print(f"\nchance: each run's own hits slid to random times ({args.shifts} shifts of at least "
+              f"{MIN_SHIFT_MS / 1000:g} s; F1 is the mean over runs, p the share of shifts scoring as well):")
+        print(f"{'condition':<14}{'F1':>7}{'chance':>8}{'p':>9}{'hits':>7}{'chance':>8}   per drum played 5+ times: F1 / chance")
+        for cond, c in luck.items():
+            drums = "  ".join(f"{DRUMS.get(n, n)} {o:.2f}/{z:.2f}" for n, (o, z) in sorted(c["per_drum"].items()))
+            print(f"{cond:<14}{c['f1']:>7.3f}{c['chance_f1']:>8.3f}{fmt_p(c['p']):>9}{c['hits']:>7}"
+                  f"{c['chance_hits']:>8.1f}   {drums}")
 
     base = args.baseline or next((b for b in BASELINES if b in runs), None)
     if base is None or base not in runs:
