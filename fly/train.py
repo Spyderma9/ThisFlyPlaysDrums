@@ -162,6 +162,14 @@ def validate(brain, decoder, loss_fn, rates: torch.Tensor, qstar: torch.Tensor, 
     return sum(losses) / rates.shape[1]
 
 
+def hold_still(decoder, loss_fn, qstar: torch.Tensor) -> float:
+    """The loss of a fly that never moves (decoded targets at rest) against qstar [B, T, 32]: the bar a trained fly
+    has to get under by striking in time. A fly that only goes quiet (e.g. by motor-neuron tone) can at best reach it."""
+    with torch.no_grad():
+        flat = qstar.reshape(-1, qstar.shape[-1])
+        return float(loss_fn(decoder.rest.expand_as(flat), flat))
+
+
 def checkpoint_settings(path: Path) -> dict:
     """What a checkpoint needs to be rebuilt: shuffle seed, plastic set, whether it has motor-neuron tone, ..."""
     ck = torch.load(path, map_location="cpu")
@@ -264,6 +272,7 @@ def main():
     n_val = min(args.val_ms, val_rates.shape[1])
     val_rates = torch.as_tensor(val_rates[:, :n_val], device=device)
     val_q = torch.as_tensor(val_q[:, :n_val], device=device)
+    hold = hold_still(decoder, loss_fn, val_q)
 
     w = brain.plastic.weight
     sign0 = torch.sign(w.detach().clone())
@@ -275,7 +284,7 @@ def main():
 
     args.out.mkdir(parents=True, exist_ok=True)
     meta = {"args": {k: str(v) for k, v in vars(args).items()}, "device": device, **settings,
-            "wiring": wiring.summary(), "updates": total, "updates_per_epoch": per_epoch,
+            "hold_still_val": hold, "wiring": wiring.summary(), "updates": total, "updates_per_epoch": per_epoch,
             "steps_per_epoch": steps_per_epoch, "takes": [{"path": t.path, "steps": len(t.rates), "notes": t.notes,
                                                            "dropped": t.dropped} for t in takes]}
     (args.out / "meta.json").write_text(json.dumps(meta, indent=1))
@@ -292,7 +301,8 @@ def main():
         val_w.writerow([epoch, update, f"{val:.6f}", round(perf_counter() - t0, 1)])
         val_f.flush()
         print(f"  validation (alpha 0, {n_val / 1000:.0f} s x {args.batch}): {val:.5f}"
-              f"{'  (best)' if val < best else ''}  [{perf_counter() - t:.0f} s]", flush=True)
+              f"{'  (best)' if val < best else ''}  {'BELOW' if val < hold else 'above'} hold-still {hold:.5f}  "
+              f"[{perf_counter() - t:.0f} s]", flush=True)
         save(args.out / "last.pt", brain, settings, epoch=epoch, update=update, val_loss=val)
         if val < best:
             save(args.out / "best.pt", brain, settings, epoch=epoch, update=update, val_loss=val)

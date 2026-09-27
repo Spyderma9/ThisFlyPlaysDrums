@@ -11,7 +11,7 @@ from fly.connectome import Connectome  # noqa: E402
 from fly.decoder import JOINTS, KIT, Decoder  # noqa: E402
 from fly.drums import LEGS  # noqa: E402
 from fly.train import (GAP_MS, Loss, Take, alpha_at, detach, keep_signs, load_weights, pack, run_window, save,  # noqa: E402
-                       take_paths)
+                       hold_still, take_paths)
 
 KIT_DATA = json.loads(KIT.read_text())
 TYPES = ["Ti flexor MN", "Ti flexor MN", "Ti extensor MN", "Fe reductor MN", "MNhl59", "?"]
@@ -78,6 +78,15 @@ def test_loss_ignores_undrivable_servos_and_weights_strokes():
     miss_at_rest = float(loss(rest + miss, rest))
     miss_in_stroke = float(loss(stroke + miss, stroke))
     assert miss_at_rest > 0 and miss_in_stroke == pytest.approx(5 * miss_at_rest)  # weight 1 + ACTIVE_W
+
+
+def test_hold_still_is_the_mean_per_step_loss_of_a_fly_at_rest():
+    dec = _decoder(40)
+    loss = Loss(dec)
+    qstar = dec.rest.expand(3, 50, -1).clone()
+    qstar[1, 10:20, TIBIA] += 0.3 * KIT_DATA["actuators"][TIBIA]["sign"]  # one stroke in one stream
+    per_step = [float(loss(dec.rest.expand(3, -1), qstar[:, t])) for t in range(50)]
+    assert hold_still(dec, loss, qstar) == pytest.approx(np.mean(per_step)) and np.mean(per_step) > 0
 
 
 def test_rest_on_pedal_holds_the_hat_closed_at_rest_and_keeps_ranges():
